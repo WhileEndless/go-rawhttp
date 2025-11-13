@@ -22,11 +22,15 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 ✅ **Priority Handling** - Stream priority and dependency management  
 
 ### 🛡️ Production Ready
-✅ **Memory Efficient** - No memory leaks, automatic cleanup, disk spilling for large responses  
-✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts  
-✅ **Error Recovery** - Robust error handling with automatic retries and fallbacks  
-✅ **Performance Monitoring** - DNS, TCP, TLS, and TTFB timing measurements  
-✅ **Thread Safety** - Concurrent request handling with proper synchronization  
+✅ **Memory Efficient** - No memory leaks, automatic cleanup, disk spilling for large responses
+✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts
+✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse
+✅ **Proxy Support** - HTTP, HTTPS, and SOCKS5 upstream proxy support with authentication
+✅ **Custom TLS** - Custom CA certificates and flexible TLS configuration
+✅ **Connection Metadata** - Detailed connection info (IP, port, protocol, TLS details)
+✅ **Error Recovery** - Robust error handling with automatic retries and fallbacks
+✅ **Performance Monitoring** - DNS, TCP, TLS, and TTFB timing measurements
+✅ **Thread Safety** - Concurrent request handling with proper synchronization
 
 ### 🔧 Developer Experience
 ✅ **Multiple Transfer Encodings** - Chunked encoding, Content-Length, and connection-close handling  
@@ -132,12 +136,21 @@ type Options struct {
     ReadTimeout  time.Duration // Read timeout
     WriteTimeout time.Duration // Write timeout
     BodyMemLimit int64         // Memory limit before spilling to disk (default: 4MB)
-    
+
     // Protocol selection
     Protocol     string        // "http/1.1" or "http/2" (auto-detected if not set)
-    
-    // HTTP/2 specific options  
+
+    // HTTP/2 specific options
     HTTP2Settings *HTTP2Settings
+
+    // Connection pooling and reuse
+    ReuseConnection bool        // Enable Keep-Alive and connection pooling
+
+    // Upstream proxy support
+    ProxyURL     string        // Upstream proxy URL (e.g., "http://proxy:8080" or "socks5://user:pass@proxy:1080")
+
+    // Custom TLS configuration
+    CustomCACerts [][]byte     // Custom root CA certificates in PEM format
 }
 
 type HTTP2Settings struct {
@@ -166,12 +179,21 @@ type Response struct {
     StatusCode  int                   // HTTP status code
     Headers     map[string][]string   // Response headers
     Body        *Buffer               // Response body
-    Raw         *Buffer               // Complete raw response
+    Raw         *Buffer               // Complete raw response (status line + headers + body)
     Timings     Metrics              // Performance timings
     BodyBytes   int64                // Body size in bytes
     RawBytes    int64                // Total response size in bytes
     HTTPVersion string               // "HTTP/1.1" or "HTTP/2"
     Metrics     *timing.Metrics      // Detailed timing metrics (same as Timings for compatibility)
+
+    // Connection metadata
+    ConnectedIP        string         // Actual IP address connected to (after DNS resolution)
+    ConnectedPort      int            // Actual port connected to
+    NegotiatedProtocol string         // Negotiated protocol (e.g., "HTTP/1.1", "HTTP/2", "h2")
+    TLSVersion         string         // TLS version used (e.g., "TLS 1.3")
+    TLSCipherSuite     string         // TLS cipher suite used
+    TLSServerName      string         // TLS Server Name (SNI)
+    ConnectionReused   bool           // Whether the connection was reused from pool
 }
 ```
 
@@ -385,6 +407,122 @@ if err != nil {
 }
 ```
 
+### Connection Pooling (Keep-Alive)
+```go
+sender := rawhttp.NewSender()
+
+opts := rawhttp.Options{
+    Scheme:          "https",
+    Host:            "api.example.com",
+    Port:            443,
+    ReuseConnection: true, // Enable connection pooling
+}
+
+// Multiple requests reuse the same connection
+for i := 0; i < 10; i++ {
+    request := fmt.Sprintf("GET /api/endpoint/%d HTTP/1.1\r\nHost: api.example.com\r\nConnection: keep-alive\r\n\r\n", i)
+
+    resp, err := sender.Do(context.Background(), []byte(request), opts)
+    if err != nil {
+        log.Printf("Request %d failed: %v", i, err)
+        continue
+    }
+
+    // Check if connection was reused
+    if resp.ConnectionReused {
+        log.Printf("Request %d: Reused connection to %s:%d", i, resp.ConnectedIP, resp.ConnectedPort)
+    }
+
+    resp.Body.Close()
+    resp.Raw.Close()
+}
+```
+
+### Upstream Proxy Support
+```go
+// HTTP proxy
+opts := rawhttp.Options{
+    Scheme:   "https",
+    Host:     "target.example.com",
+    Port:     443,
+    ProxyURL: "http://proxy.example.com:8080", // HTTP proxy
+}
+
+// HTTP proxy with authentication
+opts := rawhttp.Options{
+    Scheme:   "https",
+    Host:     "target.example.com",
+    Port:     443,
+    ProxyURL: "http://user:password@proxy.example.com:8080",
+}
+
+// HTTPS proxy
+opts := rawhttp.Options{
+    Scheme:   "https",
+    Host:     "target.example.com",
+    Port:     443,
+    ProxyURL: "https://secure-proxy.example.com:8443",
+}
+
+// SOCKS5 proxy
+opts := rawhttp.Options{
+    Scheme:   "https",
+    Host:     "target.example.com",
+    Port:     443,
+    ProxyURL: "socks5://user:password@socks-proxy.example.com:1080",
+}
+
+resp, err := sender.Do(ctx, request, opts)
+```
+
+### Custom CA Certificates
+```go
+// Load custom CA certificate
+caCert, err := os.ReadFile("custom-ca.pem")
+if err != nil {
+    log.Fatal(err)
+}
+
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "internal.example.com",
+    Port:          443,
+    CustomCACerts: [][]byte{caCert}, // Add custom CA
+}
+
+resp, err := sender.Do(ctx, request, opts)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Check TLS information
+fmt.Printf("TLS Version: %s\n", resp.TLSVersion)
+fmt.Printf("Cipher Suite: %s\n", resp.TLSCipherSuite)
+fmt.Printf("Server Name: %s\n", resp.TLSServerName)
+```
+
+### Connection Metadata
+```go
+resp, err := sender.Do(ctx, request, opts)
+if err != nil {
+    return err
+}
+defer resp.Body.Close()
+defer resp.Raw.Close()
+
+// Access detailed connection information
+fmt.Printf("Connected to: %s:%d\n", resp.ConnectedIP, resp.ConnectedPort)
+fmt.Printf("Negotiated Protocol: %s\n", resp.NegotiatedProtocol)
+fmt.Printf("TLS Version: %s\n", resp.TLSVersion)
+fmt.Printf("TLS Cipher: %s\n", resp.TLSCipherSuite)
+fmt.Printf("Connection Reused: %v\n", resp.ConnectionReused)
+
+// Verify actual connected IP (useful for debugging DNS)
+if resp.ConnectedIP != expectedIP {
+    log.Printf("Warning: Connected to %s instead of %s", resp.ConnectedIP, expectedIP)
+}
+```
+
 ## Testing
 
 The library includes comprehensive tests:
@@ -456,7 +594,6 @@ The library automatically handles protocol differences while maintaining the sam
 
 - **No Redirect Following** - Manual redirect handling required
 - **No Cookie Management** - Manual cookie handling required
-- **HTTP/1.1 Implementation** - HTTP/1.1 creates new connection per request
 - **WebSocket Support** - Not currently supported
 
 ## Documentation
@@ -513,11 +650,10 @@ github.com/WhileEndless/go-rawhttp/
 ## Roadmap
 
 ### Planned Features
-- **Connection Pooling** - HTTP/2 connection reuse for improved performance
+- **WebSocket Support** - WebSocket protocol support
 - **Advanced HTTP/2 Features** - Server push optimization and priority handling
 - **Custom DNS Resolvers** - Support for custom DNS resolution strategies
 - **Advanced Metrics** - Extended timing and performance metrics
-- **Connection Persistence** - Keep-alive connection management
 
 ### Performance Enhancements
 - **Memory Optimization** - Further reduce memory footprint for high-volume scenarios
