@@ -41,6 +41,15 @@ type Options struct {
 
 	// HTTP/2 specific options
 	HTTP2Settings *HTTP2Settings
+
+	// Connection pooling and reuse
+	ReuseConnection bool // Enable Keep-Alive and connection pooling
+
+	// Upstream proxy support
+	ProxyURL string // Upstream proxy URL (e.g., "http://proxy:8080" or "socks5://proxy:1080")
+
+	// Custom TLS configuration
+	CustomCACerts [][]byte // Custom root CA certificates in PEM format
 }
 
 // Response represents a parsed HTTP response.
@@ -55,6 +64,15 @@ type Response struct {
 	RawBytes    int64
 	HTTPVersion string // "HTTP/1.1" or "HTTP/2"
 	Metrics     *timing.Metrics
+
+	// Connection metadata
+	ConnectedIP          string // Actual IP address connected to (after DNS resolution)
+	ConnectedPort        int    // Actual port connected to
+	NegotiatedProtocol   string // Negotiated protocol (e.g., "HTTP/1.1", "HTTP/2", "h2")
+	TLSVersion           string // TLS version used (e.g., "TLS 1.3")
+	TLSCipherSuite       string // TLS cipher suite used
+	TLSServerName        string // TLS Server Name (SNI)
+	ConnectionReused     bool   // Whether the connection was reused from pool
 }
 
 // HTTP2Settings contains HTTP/2 specific configuration
@@ -102,25 +120,37 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 
 	// Create transport config
 	transportConfig := transport.Config{
-		Scheme:       opts.Scheme,
-		Host:         opts.Host,
-		Port:         opts.Port,
-		ConnectIP:    opts.ConnectIP,
-		SNI:          opts.SNI,
-		DisableSNI:   opts.DisableSNI,
-		InsecureTLS:  opts.InsecureTLS,
-		ConnTimeout:  opts.ConnTimeout,
-		DNSTimeout:   opts.DNSTimeout,
-		ReadTimeout:  opts.ReadTimeout,
-		WriteTimeout: opts.WriteTimeout,
+		Scheme:          opts.Scheme,
+		Host:            opts.Host,
+		Port:            opts.Port,
+		ConnectIP:       opts.ConnectIP,
+		SNI:             opts.SNI,
+		DisableSNI:      opts.DisableSNI,
+		InsecureTLS:     opts.InsecureTLS,
+		ConnTimeout:     opts.ConnTimeout,
+		DNSTimeout:      opts.DNSTimeout,
+		ReadTimeout:     opts.ReadTimeout,
+		WriteTimeout:    opts.WriteTimeout,
+		ReuseConnection: opts.ReuseConnection,
+		ProxyURL:        opts.ProxyURL,
+		CustomCACerts:   opts.CustomCACerts,
 	}
 
 	// Establish connection
-	conn, err := c.transport.Connect(ctx, transportConfig, timer)
+	conn, connMetadata, err := c.transport.Connect(ctx, transportConfig, timer)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+
+	// Handle connection cleanup based on pooling settings
+	shouldClose := !opts.ReuseConnection
+	defer func() {
+		if shouldClose {
+			c.transport.CloseConnection(opts.Host, opts.Port, conn)
+		} else {
+			c.transport.ReleaseConnection(opts.Host, opts.Port, conn)
+		}
+	}()
 
 	// Initialize response
 	response := &Response{
@@ -129,6 +159,14 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		// Raw buffer needs extra space for headers, status line, and HTTP overhead
 		// 2x size ensures adequate space for headers + body without frequent disk spilling
 		Raw: buffer.New(opts.BodyMemLimit * 2),
+		// Set connection metadata
+		ConnectedIP:        connMetadata.ConnectedIP,
+		ConnectedPort:      connMetadata.ConnectedPort,
+		NegotiatedProtocol: connMetadata.NegotiatedProtocol,
+		TLSVersion:         connMetadata.TLSVersion,
+		TLSCipherSuite:     connMetadata.TLSCipherSuite,
+		TLSServerName:      connMetadata.TLSServerName,
+		ConnectionReused:   connMetadata.ConnectionReused,
 	}
 
 	// Send request
