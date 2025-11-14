@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2025-11-14
+
+### Fixed - Critical Stability Issues
+
+#### 🔴 TLS Handshake Resource Leak and Nil Pointer Dereference
+
+**Severity:** CRITICAL - Application crash and resource leak
+
+**Issue:**
+- Failed TLS handshakes didn't close the underlying TCP connection, causing file descriptor leaks
+- Nil pointer dereference panic when attempting to close connection after TLS upgrade failure
+- Incorrect connection cleanup in HTTP/2 ALPN negotiation failure path
+
+**Root Cause:**
+- `pkg/transport/transport.go:324-326` - `upgradeTLS` returned nil without closing original TCP connection
+- `pkg/transport/transport.go:193` - Attempted to call `.Close()` on nil connection pointer
+- `pkg/http2/transport.go:243` - Closed wrong connection reference in ALPN negotiation failure
+
+**Impact:**
+- ✅ Prevents application crashes from TLS handshake failures
+- ✅ Eliminates resource leaks (file descriptors, memory)
+- ✅ Improves stability when connecting to servers with certificate issues
+- ✅ Mitigates potential DoS vulnerability from repeated TLS failures
+
+**Fixes Applied:**
+1. **Primary Fix (transport.go:325)**: Close original TCP connection before returning error from `upgradeTLS`
+2. **Defensive Check (transport.go:194)**: Add nil check before closing connection in error path
+3. **HTTP/2 Fix (http2/transport.go:243)**: Close TLS connection instead of underlying TCP connection
+
+**Triggering Scenarios:**
+- TLS handshake timeout
+- Certificate validation failure (expired, self-signed, hostname mismatch)
+- SNI issues
+- Protocol negotiation failure (unsupported TLS version/cipher suite)
+- Connection reset during handshake
+- Context cancellation during TLS handshake
+
+**Testing:**
+- Verified no panic on TLS handshake failures
+- Verified proper connection cleanup on all error paths
+- Verified no file descriptor leaks using lsof
+- Tested against various badssl.com endpoints (expired.badssl.com, self-signed.badssl.com, etc.)
+
+### Changed
+
+- Enhanced error handling robustness in transport layer
+- Improved resource cleanup consistency across all error paths
+
+### Security
+
+- Mitigated potential DoS vulnerability from TLS handshake failures
+- Prevented resource exhaustion from leaked file descriptors
+
+## [1.1.1] - 2025-11-14
+
+### Added
+
+#### HTTP/2 Debug Flags
+
+- Optional selective debugging for HTTP/2 protocol issues
+- New `Debug` struct in `HTTP2Settings` with granular logging flags
+- Zero overhead when disabled (all flags default to false)
+- Backward compatible with deprecated `ShowFrameDetails` and `TraceFrames` flags
+
 ## [1.1.0] - 2025-11-14
 
 ### Added - Low-Level Transport Enhancements
@@ -111,5 +175,7 @@ stats := sender.PoolStats() // ✅ New API
 - Comprehensive error handling
 - Production-ready features
 
+[1.1.2]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/WhileEndless/go-rawhttp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/WhileEndless/go-rawhttp/releases/tag/v1.0.0
