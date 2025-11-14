@@ -7,12 +7,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/WhileEndless/go-rawhttp/pkg/errors"
@@ -42,17 +44,33 @@ type Config struct {
 
 	// Custom CA certificates
 	CustomCACerts [][]byte
+
+	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
+	// If nil, default configuration will be used based on other options.
+	TLSConfig *tls.Config
 }
 
 // ConnectionMetadata holds metadata about the established connection
 type ConnectionMetadata struct {
+	// Basic connection info
 	ConnectedIP        string
 	ConnectedPort      int
 	NegotiatedProtocol string
-	TLSVersion         string
-	TLSCipherSuite     string
-	TLSServerName      string
 	ConnectionReused   bool
+
+	// Socket-level information
+	LocalAddr    string // Local socket address
+	RemoteAddr   string // Remote socket address
+	ConnectionID uint64 // Unique identifier for this connection
+
+	// TLS information
+	TLSVersion     string
+	TLSCipherSuite string
+	TLSServerName  string
+
+	// Enhanced TLS metadata
+	TLSSessionID string // TLS session ID (hex-encoded)
+	TLSResumed   bool   // Whether TLS session was resumed
 }
 
 // pooledConnection wraps a connection with metadata
@@ -66,10 +84,21 @@ type pooledConnection struct {
 
 // Transport handles the network connection and protocol negotiation.
 type Transport struct {
-	resolver   *net.Resolver
-	connPool   sync.Map // map[string]*pooledConnection (key: "host:port")
-	poolMutex  sync.Mutex
-	maxIdleTime time.Duration // Maximum idle time for pooled connections
+	resolver          *net.Resolver
+	connPool          sync.Map      // map[string]*pooledConnection (key: "host:port")
+	poolMutex         sync.Mutex
+	maxIdleTime       time.Duration // Maximum idle time for pooled connections
+	connectionIDCounter uint64      // Atomic counter for unique connection IDs
+
+	// Pool statistics (atomic counters)
+	statsConnectionsReused uint64 // Lifetime count of reused connections
+}
+
+// PoolStats provides read-only statistics about the connection pool.
+type PoolStats struct {
+	ActiveConns int // Currently in use (checked out)
+	IdleConns   int // Idle in pool (available)
+	TotalReused int // Lifetime reuse count
 }
 
 // New creates a new Transport instance.
@@ -146,6 +175,16 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 			return nil, nil, errors.NewConnectionError(config.Host, config.Port, err)
 		}
 	}
+
+	// Populate socket-level metadata
+	if conn.LocalAddr() != nil {
+		metadata.LocalAddr = conn.LocalAddr().String()
+	}
+	if conn.RemoteAddr() != nil {
+		metadata.RemoteAddr = conn.RemoteAddr().String()
+	}
+	// Generate unique connection ID
+	metadata.ConnectionID = atomic.AddUint64(&t.connectionIDCounter, 1)
 
 	// Upgrade to TLS if needed
 	if strings.EqualFold(config.Scheme, "https") {
@@ -238,32 +277,47 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	tlsCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 
-	tlsConfig := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: config.InsecureTLS,
-		NextProtos:         []string{"http/1.1"},
-	}
+	var tlsConfig *tls.Config
 
-	// Add custom CA certificates if provided
-	if len(config.CustomCACerts) > 0 {
-		rootCAs := x509.NewCertPool()
-		for _, caCert := range config.CustomCACerts {
-			if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
-				return nil, errors.NewTLSError(config.Host, config.Port,
-					errors.NewValidationError("failed to parse CA certificate"))
+	// Use provided TLSConfig if available (direct passthrough)
+	if config.TLSConfig != nil {
+		// Clone the provided config to avoid modifying the original
+		tlsConfig = config.TLSConfig.Clone()
+	} else {
+		// Create default TLS configuration
+		tlsConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: config.InsecureTLS,
+			NextProtos:         []string{"http/1.1"},
+		}
+
+		// Add custom CA certificates if provided
+		if len(config.CustomCACerts) > 0 {
+			rootCAs := x509.NewCertPool()
+			for _, caCert := range config.CustomCACerts {
+				if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
+					return nil, errors.NewTLSError(config.Host, config.Port,
+						errors.NewValidationError("failed to parse CA certificate"))
+				}
 			}
+			tlsConfig.RootCAs = rootCAs
 		}
-		tlsConfig.RootCAs = rootCAs
+
+		// Configure SNI
+		if !config.DisableSNI {
+			serverName := config.SNI
+			if serverName == "" {
+				serverName = config.Host
+			}
+			tlsConfig.ServerName = serverName
+		}
 	}
 
-	// Configure SNI
-	if !config.DisableSNI {
-		serverName := config.SNI
-		if serverName == "" {
-			serverName = config.Host
-		}
-		tlsConfig.ServerName = serverName
-		metadata.TLSServerName = serverName
+	// Store SNI in metadata
+	if tlsConfig.ServerName != "" {
+		metadata.TLSServerName = tlsConfig.ServerName
+	} else if !config.DisableSNI {
+		metadata.TLSServerName = config.Host
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
@@ -278,6 +332,22 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	metadata.NegotiatedProtocol = state.NegotiatedProtocol
 	if metadata.NegotiatedProtocol == "" {
 		metadata.NegotiatedProtocol = "HTTP/1.1"
+	}
+
+	// Enhanced TLS metadata
+	metadata.TLSResumed = state.DidResume
+
+	// Extract TLS session ID if available (from TLS <= 1.2)
+	// Note: TLS 1.3 uses session tickets instead of session IDs
+	if len(state.TLSUnique) > 0 {
+		// TLSUnique is the "tls-unique" channel binding value (RFC 5929)
+		// Use it as a proxy for session identification
+		metadata.TLSSessionID = hex.EncodeToString(state.TLSUnique)
+	} else if state.Version <= tls.VersionTLS12 {
+		// For TLS 1.2 and below, we could potentially access session ID
+		// but it's not directly exposed in Go's API
+		// Leave empty for now
+		metadata.TLSSessionID = ""
 	}
 
 	return tlsConn, nil
@@ -323,6 +393,9 @@ func (t *Transport) getFromPool(key string) (net.Conn, *ConnectionMetadata, bool
 
 	pooled.inUse = true
 	pooled.lastUsed = time.Now()
+
+	// Increment reuse counter
+	atomic.AddUint64(&t.statsConnectionsReused, 1)
 
 	// Copy metadata
 	metaCopy := pooled.metadata
@@ -408,6 +481,30 @@ func (t *Transport) isConnectionAlive(conn net.Conn) bool {
 
 	// Any other error means connection is dead
 	return false
+}
+
+// PoolStats returns current connection pool statistics.
+// This is a read-only snapshot of the pool state.
+func (t *Transport) PoolStats() PoolStats {
+	var active, idle int
+
+	t.poolMutex.Lock()
+	t.connPool.Range(func(key, value interface{}) bool {
+		pooled := value.(*pooledConnection)
+		if pooled.inUse {
+			active++
+		} else {
+			idle++
+		}
+		return true
+	})
+	t.poolMutex.Unlock()
+
+	return PoolStats{
+		ActiveConns: active,
+		IdleConns:   idle,
+		TotalReused: int(atomic.LoadUint64(&t.statsConnectionsReused)),
+	}
 }
 
 // cleanupIdleConnections periodically removes idle connections from pool

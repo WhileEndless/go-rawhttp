@@ -4,6 +4,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/textproto"
@@ -50,6 +51,11 @@ type Options struct {
 
 	// Custom TLS configuration
 	CustomCACerts [][]byte // Custom root CA certificates in PEM format
+
+	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
+	// If nil, default configuration will be used based on other options (InsecureTLS, SNI, etc.).
+	// This provides maximum flexibility for custom TLS versions, cipher suites, client certificates, etc.
+	TLSConfig *tls.Config `json:"-"`
 }
 
 // Response represents a parsed HTTP response.
@@ -65,25 +71,60 @@ type Response struct {
 	HTTPVersion string // "HTTP/1.1" or "HTTP/2"
 	Metrics     *timing.Metrics
 
-	// Connection metadata
+	// Connection metadata - Basic network information
 	ConnectedIP          string // Actual IP address connected to (after DNS resolution)
 	ConnectedPort        int    // Actual port connected to
 	NegotiatedProtocol   string // Negotiated protocol (e.g., "HTTP/1.1", "HTTP/2", "h2")
-	TLSVersion           string // TLS version used (e.g., "TLS 1.3")
-	TLSCipherSuite       string // TLS cipher suite used
-	TLSServerName        string // TLS Server Name (SNI)
 	ConnectionReused     bool   // Whether the connection was reused from pool
+
+	// Enhanced connection metadata - Socket-level information
+	LocalAddr    string // Local socket address (e.g., "192.168.1.100:54321")
+	RemoteAddr   string // Remote socket address (e.g., "93.184.216.34:443")
+	ConnectionID uint64 // Unique connection identifier for tracking
+
+	// TLS metadata - Standard TLS information
+	TLSVersion     string // TLS version used (e.g., "TLS 1.3")
+	TLSCipherSuite string // TLS cipher suite used
+	TLSServerName  string // TLS Server Name (SNI)
+
+	// Enhanced TLS metadata - Session information
+	TLSSessionID string // TLS session ID (hex-encoded)
+	TLSResumed   bool   // Whether TLS session was resumed
 }
 
-// HTTP2Settings contains HTTP/2 specific configuration
+// HTTP2Settings contains HTTP/2 specific configuration.
+// These settings map directly to HTTP/2 SETTINGS frame parameters (RFC 7540).
 type HTTP2Settings struct {
-	EnableServerPush     bool
-	EnableCompression    bool
+	// MaxConcurrentStreams limits the number of concurrent streams (SETTINGS_MAX_CONCURRENT_STREAMS).
+	// Default: unlimited. Set to control server resource usage.
 	MaxConcurrentStreams uint32
-	InitialWindowSize    uint32
-	MaxFrameSize         uint32
-	MaxHeaderListSize    uint32
-	HeaderTableSize      uint32
+
+	// InitialWindowSize sets the initial flow control window size (SETTINGS_INITIAL_WINDOW_SIZE).
+	// Default: 65535 bytes. Increase for high-throughput scenarios.
+	InitialWindowSize uint32
+
+	// MaxFrameSize sets the maximum frame payload size (SETTINGS_MAX_FRAME_SIZE).
+	// Default: 16384 bytes. Valid range: 16384 to 16777215.
+	MaxFrameSize uint32
+
+	// MaxHeaderListSize limits the maximum size of header list (SETTINGS_MAX_HEADER_LIST_SIZE).
+	// Default: unlimited. Set to protect against large header attacks.
+	MaxHeaderListSize uint32
+
+	// HeaderTableSize sets the HPACK header compression table size (SETTINGS_HEADER_TABLE_SIZE).
+	// Default: 4096 bytes.
+	HeaderTableSize uint32
+
+	// DisableServerPush disables HTTP/2 server push (sets SETTINGS_ENABLE_PUSH to 0).
+	// Recommended for security and to reduce unwanted traffic.
+	DisableServerPush bool
+
+	// EnableCompression enables HPACK header compression.
+	// Default: true. Disable only for debugging.
+	EnableCompression bool
+
+	// Deprecated: Use DisableServerPush instead (inverted logic for clarity).
+	EnableServerPush bool
 }
 
 // Client implements raw HTTP/1.1 transport.
@@ -103,6 +144,14 @@ func NewWithTransport(t *transport.Transport) *Client {
 	return &Client{
 		transport: t,
 	}
+}
+
+// PoolStats returns connection pool statistics.
+func (c *Client) PoolStats() transport.PoolStats {
+	if c.transport == nil {
+		return transport.PoolStats{}
+	}
+	return c.transport.PoolStats()
 }
 
 // Do executes the HTTP request using raw sockets.
@@ -134,6 +183,7 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		ReuseConnection: opts.ReuseConnection,
 		ProxyURL:        opts.ProxyURL,
 		CustomCACerts:   opts.CustomCACerts,
+		TLSConfig:       opts.TLSConfig,
 	}
 
 	// Establish connection
@@ -159,14 +209,22 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		// Raw buffer needs extra space for headers, status line, and HTTP overhead
 		// 2x size ensures adequate space for headers + body without frequent disk spilling
 		Raw: buffer.New(opts.BodyMemLimit * 2),
-		// Set connection metadata
+		// Set basic connection metadata
 		ConnectedIP:        connMetadata.ConnectedIP,
 		ConnectedPort:      connMetadata.ConnectedPort,
 		NegotiatedProtocol: connMetadata.NegotiatedProtocol,
-		TLSVersion:         connMetadata.TLSVersion,
-		TLSCipherSuite:     connMetadata.TLSCipherSuite,
-		TLSServerName:      connMetadata.TLSServerName,
 		ConnectionReused:   connMetadata.ConnectionReused,
+		// Set enhanced socket metadata
+		LocalAddr:    connMetadata.LocalAddr,
+		RemoteAddr:   connMetadata.RemoteAddr,
+		ConnectionID: connMetadata.ConnectionID,
+		// Set TLS metadata
+		TLSVersion:     connMetadata.TLSVersion,
+		TLSCipherSuite: connMetadata.TLSCipherSuite,
+		TLSServerName:  connMetadata.TLSServerName,
+		// Set enhanced TLS metadata
+		TLSSessionID: connMetadata.TLSSessionID,
+		TLSResumed:   connMetadata.TLSResumed,
 	}
 
 	// Send request
