@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -83,6 +83,34 @@ func main() {
 ```
 
 ## Recent Enhancements
+
+### v1.1.2 (2025-11-14)
+
+🔴 **CRITICAL BUG FIX** - Resource leak and nil pointer dereference in TLS handshake
+
+#### Fixed
+- **TLS Handshake Resource Leak**: Fixed critical bug where failed TLS handshakes didn't close the underlying TCP connection, causing file descriptor leaks
+- **Nil Pointer Dereference**: Fixed panic when TLS upgrade fails and connection cleanup is attempted
+- **HTTP/2 ALPN Cleanup**: Fixed incorrect connection closure in HTTP/2 ALPN negotiation failure path
+- **Defensive Error Handling**: Added nil checks in error paths to prevent panics
+
+#### Impact
+- Prevents application crashes from TLS handshake failures
+- Eliminates resource leaks (file descriptors, memory)
+- Improves stability when connecting to servers with certificate issues
+- Mitigates potential DoS vulnerability from repeated TLS failures
+
+#### Technical Details
+See commit history for detailed analysis and test cases covering:
+- TLS handshake timeout scenarios
+- Certificate validation failures
+- SNI issues and protocol negotiation failures
+- Connection reset during handshake
+- Context cancellation during TLS handshake
+
+All existing functionality remains unchanged. This is a critical stability update recommended for all users.
+
+---
 
 ### v1.1.1 (2025-11-14)
 

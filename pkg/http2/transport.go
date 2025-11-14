@@ -240,7 +240,7 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 	// Verify ALPN negotiation
 	state := tlsConn.ConnectionState()
 	if state.NegotiatedProtocol != "h2" {
-		conn.Close()
+		tlsConn.Close() // Close TLS connection (which also closes underlying TCP connection)
 		return nil, fmt.Errorf("server does not support HTTP/2 (negotiated: %s)", state.NegotiatedProtocol)
 	}
 
