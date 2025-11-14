@@ -24,12 +24,12 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 ### 🛡️ Production Ready
 ✅ **Memory Efficient** - No memory leaks, automatic cleanup, disk spilling for large responses
 ✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts
-✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse
+✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse and observability
 ✅ **Proxy Support** - HTTP, HTTPS, and SOCKS5 upstream proxy support with authentication
-✅ **Custom TLS** - Custom CA certificates and flexible TLS configuration
-✅ **Connection Metadata** - Detailed connection info (IP, port, protocol, TLS details)
-✅ **Error Recovery** - Robust error handling with automatic retries and fallbacks
-✅ **Performance Monitoring** - DNS, TCP, TLS, and TTFB timing measurements
+✅ **Custom TLS** - Direct TLS config passthrough for full control (TLS versions, cipher suites, client certs)
+✅ **Connection Metadata** - Detailed socket-level and TLS session info (addresses, session IDs, resumption)
+✅ **Error Recovery** - Structured error classification with operation tracking for smart retry logic
+✅ **Performance Monitoring** - Standardized DNS, TCP, TLS, and TTFB timing measurements
 ✅ **Thread Safety** - Concurrent request handling with proper synchronization
 
 ### 🔧 Developer Experience
@@ -81,6 +81,126 @@ func main() {
     fmt.Printf("Timings: %s\n", resp.Timings.String())
 }
 ```
+
+## Recent Enhancements (2025-11-14)
+
+go-rawhttp now includes 6 powerful low-level transport enhancements designed for production use:
+
+### 1. TLS Configuration Passthrough ⭐⭐⭐⭐⭐
+
+Direct access to `crypto/tls.Config` for maximum flexibility:
+
+```go
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "example.com",
+    Port:   443,
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS13,          // Enforce TLS 1.3+
+        CipherSuites: []uint16{...},            // Custom cipher suites
+        Certificates: []tls.Certificate{...},   // Client certificates
+    },
+}
+```
+
+### 2. Standardized Timing Metrics ⭐⭐⭐⭐
+
+Industry-standard field names with backward compatibility:
+
+```go
+resp, _ := sender.Do(ctx, req, opts)
+fmt.Printf("DNS: %v\n", resp.Metrics.DNSLookup)       // New: Clear naming
+fmt.Printf("TCP: %v\n", resp.Metrics.TCPConnect)      // New: Clear naming
+fmt.Printf("TLS: %v\n", resp.Metrics.TLSHandshake)    // New: Clear naming
+fmt.Printf("TTFB: %v\n", resp.Metrics.TTFB)           // Unchanged
+fmt.Printf("Total: %v\n", resp.Metrics.TotalTime)     // New: Consistent naming
+
+// Old field names still work (deprecated but supported)
+fmt.Printf("DNS: %v\n", resp.Metrics.DNS)             // Backward compatible
+```
+
+### 3. HTTP/2 Settings Exposure ⭐⭐⭐⭐
+
+RFC 7540 compliant HTTP/2 configuration:
+
+```go
+opts := rawhttp.Options{
+    HTTP2Settings: &rawhttp.HTTP2Settings{
+        MaxConcurrentStreams: 100,                     // SETTINGS_MAX_CONCURRENT_STREAMS
+        InitialWindowSize:    4194304,                 // SETTINGS_INITIAL_WINDOW_SIZE (4MB)
+        MaxFrameSize:         16384,                   // SETTINGS_MAX_FRAME_SIZE (16KB)
+        MaxHeaderListSize:    10485760,                // SETTINGS_MAX_HEADER_LIST_SIZE (10MB)
+        DisableServerPush:    true,                    // Security: disable server push
+        EnableCompression:    true,                    // HPACK compression
+    },
+}
+```
+
+### 4. Enhanced Connection Metadata ⭐⭐⭐
+
+Socket-level and TLS session information:
+
+```go
+resp, _ := sender.Do(ctx, req, opts)
+
+// Socket-level info
+fmt.Printf("Local: %s\n", resp.LocalAddr)              // "192.168.1.100:54321"
+fmt.Printf("Remote: %s\n", resp.RemoteAddr)            // "93.184.216.34:443"
+fmt.Printf("Conn ID: %d\n", resp.ConnectionID)         // Unique identifier
+
+// TLS session info
+fmt.Printf("Session ID: %s\n", resp.TLSSessionID)      // Hex-encoded session ID
+fmt.Printf("Resumed: %v\n", resp.TLSResumed)           // Session resumption flag
+```
+
+### 5. Error Type Classification ⭐⭐⭐
+
+Operation tracking for smart retry logic:
+
+```go
+resp, err := sender.Do(ctx, req, opts)
+if err != nil {
+    if transportErr, ok := err.(*rawhttp.TransportError); ok {
+        fmt.Printf("Phase: %s\n", transportErr.Type)   // dns, tcp, tls, http
+        fmt.Printf("Op: %s\n", transportErr.Op)        // lookup, dial, handshake, read, write
+        fmt.Printf("Addr: %s\n", transportErr.Addr)    // example.com:443
+
+        // Smart retry logic
+        if transportErr.Type == rawhttp.ErrorTypeDNS {
+            // Retry DNS errors
+        } else if transportErr.Type == rawhttp.ErrorTypeTLS {
+            // Don't retry TLS errors
+        }
+    }
+}
+```
+
+### 6. Connection Pool Observability ⭐⭐
+
+Monitor pool health and performance:
+
+```go
+sender := rawhttp.NewSender()
+
+// Make requests with pooling enabled
+opts := rawhttp.Options{
+    ReuseConnection: true,
+    // ... other options
+}
+
+// Get pool statistics
+stats := sender.PoolStats()
+fmt.Printf("Active: %d\n", stats.ActiveConns)          // In use
+fmt.Printf("Idle: %d\n", stats.IdleConns)              // Available
+fmt.Printf("Reused: %d\n", stats.TotalReused)          // Lifetime count
+
+// Detect issues
+if stats.ActiveConns > 100 {
+    fmt.Println("Warning: Possible connection leak")
+}
+```
+
+All enhancements are **100% backward compatible** - existing code continues to work unchanged.
 
 ## Architecture
 
