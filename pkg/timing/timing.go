@@ -7,17 +7,35 @@ import (
 )
 
 // Metrics captures detailed timing information for a request.
+// All fields are properly named to match industry-standard conventions.
 type Metrics struct {
-	// DNS resolution time
-	DNS time.Duration `json:"dns"`
-	// TCP connection establishment time
-	TCP time.Duration `json:"tcp"`
-	// TLS handshake time (0 for HTTP)
-	TLS time.Duration `json:"tls"`
-	// Time to first byte (server processing time)
+	// DNSLookup is the time spent performing DNS resolution
+	DNSLookup time.Duration `json:"dns_lookup"`
+
+	// TCPConnect is the time spent establishing TCP connection (handshake)
+	TCPConnect time.Duration `json:"tcp_connect"`
+
+	// TLSHandshake is the time spent performing TLS handshake (0 for HTTP)
+	TLSHandshake time.Duration `json:"tls_handshake"`
+
+	// TTFB (Time To First Byte) is the time spent waiting for the first response byte
+	// This represents server processing time
 	TTFB time.Duration `json:"ttfb"`
-	// Total request time
-	Total time.Duration `json:"total"`
+
+	// TotalTime is the total end-to-end request time
+	TotalTime time.Duration `json:"total_time"`
+
+	// Deprecated: Use DNSLookup instead
+	DNS time.Duration `json:"dns,omitempty"`
+
+	// Deprecated: Use TCPConnect instead
+	TCP time.Duration `json:"tcp,omitempty"`
+
+	// Deprecated: Use TLSHandshake instead
+	TLS time.Duration `json:"tls,omitempty"`
+
+	// Deprecated: Use TotalTime instead
+	Total time.Duration `json:"total,omitempty"`
 }
 
 // Timer helps measure request timings.
@@ -82,20 +100,29 @@ func (t *Timer) EndTTFB() {
 
 // GetMetrics returns the calculated timing metrics.
 func (t *Timer) GetMetrics() Metrics {
+	totalTime := time.Since(t.start)
+
 	metrics := Metrics{
-		Total: time.Since(t.start),
+		TotalTime: totalTime,
+		Total:     totalTime, // Deprecated: for backward compatibility
 	}
 
 	if !t.dnsStart.IsZero() && !t.dnsEnd.IsZero() {
-		metrics.DNS = t.dnsEnd.Sub(t.dnsStart)
+		dnsTime := t.dnsEnd.Sub(t.dnsStart)
+		metrics.DNSLookup = dnsTime
+		metrics.DNS = dnsTime // Deprecated: for backward compatibility
 	}
 
 	if !t.tcpStart.IsZero() && !t.tcpEnd.IsZero() {
-		metrics.TCP = t.tcpEnd.Sub(t.tcpStart)
+		tcpTime := t.tcpEnd.Sub(t.tcpStart)
+		metrics.TCPConnect = tcpTime
+		metrics.TCP = tcpTime // Deprecated: for backward compatibility
 	}
 
 	if !t.tlsStart.IsZero() && !t.tlsEnd.IsZero() {
-		metrics.TLS = t.tlsEnd.Sub(t.tlsStart)
+		tlsTime := t.tlsEnd.Sub(t.tlsStart)
+		metrics.TLSHandshake = tlsTime
+		metrics.TLS = tlsTime // Deprecated: for backward compatibility
 	}
 
 	if !t.ttfbStart.IsZero() && !t.ttfbEnd.IsZero() {
@@ -107,7 +134,7 @@ func (t *Timer) GetMetrics() Metrics {
 
 // GetConnectionTime returns the total connection establishment time (DNS + TCP + TLS).
 func (m Metrics) GetConnectionTime() time.Duration {
-	return m.DNS + m.TCP + m.TLS
+	return m.DNSLookup + m.TCPConnect + m.TLSHandshake
 }
 
 // GetServerTime returns the server processing time.
@@ -117,11 +144,11 @@ func (m Metrics) GetServerTime() time.Duration {
 
 // GetNetworkTime returns the total network time (excluding server processing).
 func (m Metrics) GetNetworkTime() time.Duration {
-	return m.Total - m.TTFB
+	return m.TotalTime - m.TTFB
 }
 
 // String provides a human-readable representation of the metrics.
 func (m Metrics) String() string {
-	return fmt.Sprintf("DNS: %v, TCP: %v, TLS: %v, TTFB: %v, Total: %v",
-		m.DNS, m.TCP, m.TLS, m.TTFB, m.Total)
+	return fmt.Sprintf("DNSLookup: %v, TCPConnect: %v, TLSHandshake: %v, TTFB: %v, TotalTime: %v",
+		m.DNSLookup, m.TCPConnect, m.TLSHandshake, m.TTFB, m.TotalTime)
 }
