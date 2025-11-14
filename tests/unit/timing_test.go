@@ -56,15 +56,20 @@ func TestTimer(t *testing.T) {
 
 func TestMetricsCalculations(t *testing.T) {
 	metrics := timing.Metrics{
+		DNSLookup:    10 * time.Millisecond,
+		TCPConnect:   20 * time.Millisecond,
+		TLSHandshake: 30 * time.Millisecond,
+		TTFB:         40 * time.Millisecond,
+		TotalTime:    150 * time.Millisecond,
+		// Backward compatibility fields (auto-set by GetMetrics, but we set manually for test)
 		DNS:   10 * time.Millisecond,
 		TCP:   20 * time.Millisecond,
 		TLS:   30 * time.Millisecond,
-		TTFB:  40 * time.Millisecond,
 		Total: 150 * time.Millisecond,
 	}
 
 	// Test connection time calculation
-	expectedConnectionTime := 10 + 20 + 30 // DNS + TCP + TLS
+	expectedConnectionTime := 10 + 20 + 30 // DNSLookup + TCPConnect + TLSHandshake
 	if metrics.GetConnectionTime() != time.Duration(expectedConnectionTime)*time.Millisecond {
 		t.Errorf("expected connection time %v, got %v",
 			time.Duration(expectedConnectionTime)*time.Millisecond,
@@ -77,7 +82,7 @@ func TestMetricsCalculations(t *testing.T) {
 	}
 
 	// Test network time
-	expectedNetworkTime := 150 - 40 // Total - TTFB
+	expectedNetworkTime := 150 - 40 // TotalTime - TTFB
 	if metrics.GetNetworkTime() != time.Duration(expectedNetworkTime)*time.Millisecond {
 		t.Errorf("expected network time %v, got %v",
 			time.Duration(expectedNetworkTime)*time.Millisecond,
@@ -87,11 +92,11 @@ func TestMetricsCalculations(t *testing.T) {
 
 func TestMetricsString(t *testing.T) {
 	metrics := timing.Metrics{
-		DNS:   10 * time.Millisecond,
-		TCP:   20 * time.Millisecond,
-		TLS:   30 * time.Millisecond,
-		TTFB:  40 * time.Millisecond,
-		Total: 100 * time.Millisecond,
+		DNSLookup:    10 * time.Millisecond,
+		TCPConnect:   20 * time.Millisecond,
+		TLSHandshake: 30 * time.Millisecond,
+		TTFB:         40 * time.Millisecond,
+		TotalTime:    100 * time.Millisecond,
 	}
 
 	str := metrics.String()
@@ -99,8 +104,8 @@ func TestMetricsString(t *testing.T) {
 		t.Error("string representation should not be empty")
 	}
 
-	// Check that it contains the expected components
-	expectedSubstrings := []string{"DNS:", "TCP:", "TLS:", "TTFB:", "Total:"}
+	// Check that it contains the new field names
+	expectedSubstrings := []string{"DNSLookup:", "TCPConnect:", "TLSHandshake:", "TTFB:", "TotalTime:"}
 	for _, substr := range expectedSubstrings {
 		if !contains(str, substr) {
 			t.Errorf("string representation should contain %q", substr)
