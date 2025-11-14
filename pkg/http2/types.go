@@ -41,9 +41,20 @@ type Options struct {
 	// Priority settings
 	Priority *PriorityParam
 
-	// Debug options
+	// Debug contains HTTP/2 debugging flags (optional, all default to false).
+	// These flags enable detailed logging of HTTP/2 protocol operations.
+	// Production safe - explicit opt-in with zero overhead when disabled.
+	Debug struct {
+		LogFrames   bool // Log all HTTP/2 frames
+		LogSettings bool // Log SETTINGS frames
+		LogHeaders  bool // Log HEADERS frames
+		LogData     bool // Log DATA frames
+	}
+
+	// Deprecated: Use Debug.LogFrames instead
 	ShowFrameDetails bool
-	TraceFrames      bool
+	// Deprecated: Use Debug.LogFrames instead
+	TraceFrames bool
 
 	// Deprecated: Use DisableServerPush instead (inverted logic)
 	EnableServerPush bool
@@ -243,7 +254,7 @@ func (c *Connection) Close() error {
 // DefaultOptions returns default HTTP/2 options (aligned with Go's native HTTP/2).
 // All SETTINGS values are set to recommended defaults per RFC 7540.
 func DefaultOptions() *Options {
-	return &Options{
+	opts := &Options{
 		MaxConcurrentStreams: 100,
 		InitialWindowSize:    4194304,  // 4MB (same as Go's HTTP/2)
 		MaxFrameSize:         16384,    // 16KB (RFC 7540 default)
@@ -253,8 +264,14 @@ func DefaultOptions() *Options {
 		EnableCompression:    true,
 		EnableMultiplexing:   false,
 		ReuseConnection:      false,
-		ShowFrameDetails:     false,
-		TraceFrames:          false,
+		ShowFrameDetails:     false, // Deprecated
+		TraceFrames:          false, // Deprecated
 		EnableServerPush:     false, // Deprecated: kept for backward compatibility
 	}
+	// Debug flags default to false (zero values)
+	opts.Debug.LogFrames = false
+	opts.Debug.LogSettings = false
+	opts.Debug.LogHeaders = false
+	opts.Debug.LogData = false
+	return opts
 }
