@@ -4,6 +4,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"io"
 	"net"
 	"net/textproto"
@@ -50,6 +51,11 @@ type Options struct {
 
 	// Custom TLS configuration
 	CustomCACerts [][]byte // Custom root CA certificates in PEM format
+
+	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
+	// If nil, default configuration will be used based on other options (InsecureTLS, SNI, etc.).
+	// This provides maximum flexibility for custom TLS versions, cipher suites, client certificates, etc.
+	TLSConfig *tls.Config `json:"-"`
 }
 
 // Response represents a parsed HTTP response.
@@ -134,6 +140,7 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		ReuseConnection: opts.ReuseConnection,
 		ProxyURL:        opts.ProxyURL,
 		CustomCACerts:   opts.CustomCACerts,
+		TLSConfig:       opts.TLSConfig,
 	}
 
 	// Establish connection
