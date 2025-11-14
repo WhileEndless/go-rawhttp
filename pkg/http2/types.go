@@ -10,16 +10,29 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
-// Options contains HTTP/2 specific configuration
+// Options contains HTTP/2 specific configuration.
+// These settings map to HTTP/2 SETTINGS frame parameters (RFC 7540).
 type Options struct {
-	// Connection settings
-	EnableServerPush     bool
-	EnableCompression    bool
+	// MaxConcurrentStreams limits concurrent streams (SETTINGS_MAX_CONCURRENT_STREAMS)
 	MaxConcurrentStreams uint32
-	InitialWindowSize    uint32
-	MaxFrameSize         uint32
-	MaxHeaderListSize    uint32
-	HeaderTableSize      uint32
+
+	// InitialWindowSize sets flow control window (SETTINGS_INITIAL_WINDOW_SIZE)
+	InitialWindowSize uint32
+
+	// MaxFrameSize sets maximum frame payload (SETTINGS_MAX_FRAME_SIZE)
+	MaxFrameSize uint32
+
+	// MaxHeaderListSize limits header list size (SETTINGS_MAX_HEADER_LIST_SIZE)
+	MaxHeaderListSize uint32
+
+	// HeaderTableSize sets HPACK table size (SETTINGS_HEADER_TABLE_SIZE)
+	HeaderTableSize uint32
+
+	// DisableServerPush disables server push (SETTINGS_ENABLE_PUSH = 0)
+	DisableServerPush bool
+
+	// EnableCompression enables HPACK header compression
+	EnableCompression bool
 
 	// Multiplexing options
 	EnableMultiplexing bool
@@ -31,6 +44,9 @@ type Options struct {
 	// Debug options
 	ShowFrameDetails bool
 	TraceFrames      bool
+
+	// Deprecated: Use DisableServerPush instead (inverted logic)
+	EnableServerPush bool
 }
 
 // PriorityParam represents stream priority settings
@@ -224,19 +240,21 @@ func (c *Connection) Close() error {
 	return nil
 }
 
-// DefaultOptions returns default HTTP/2 options (aligned with Go's native HTTP/2)
+// DefaultOptions returns default HTTP/2 options (aligned with Go's native HTTP/2).
+// All SETTINGS values are set to recommended defaults per RFC 7540.
 func DefaultOptions() *Options {
 	return &Options{
-		EnableServerPush:     false,
-		EnableCompression:    true,
 		MaxConcurrentStreams: 100,
 		InitialWindowSize:    4194304,  // 4MB (same as Go's HTTP/2)
-		MaxFrameSize:         16384,    // 16KB (standard)
+		MaxFrameSize:         16384,    // 16KB (RFC 7540 default)
 		MaxHeaderListSize:    10485760, // 10MB (same as Go's HTTP/2)
-		HeaderTableSize:      4096,     // 4KB (standard)
+		HeaderTableSize:      4096,     // 4KB (RFC 7540 default)
+		DisableServerPush:    true,     // Disabled by default for security
+		EnableCompression:    true,
 		EnableMultiplexing:   false,
 		ReuseConnection:      false,
 		ShowFrameDetails:     false,
 		TraceFrames:          false,
+		EnableServerPush:     false, // Deprecated: kept for backward compatibility
 	}
 }
