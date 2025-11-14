@@ -42,6 +42,10 @@ type Config struct {
 
 	// Custom CA certificates
 	CustomCACerts [][]byte
+
+	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
+	// If nil, default configuration will be used based on other options.
+	TLSConfig *tls.Config
 }
 
 // ConnectionMetadata holds metadata about the established connection
@@ -238,32 +242,47 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	tlsCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 
-	tlsConfig := &tls.Config{
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: config.InsecureTLS,
-		NextProtos:         []string{"http/1.1"},
-	}
+	var tlsConfig *tls.Config
 
-	// Add custom CA certificates if provided
-	if len(config.CustomCACerts) > 0 {
-		rootCAs := x509.NewCertPool()
-		for _, caCert := range config.CustomCACerts {
-			if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
-				return nil, errors.NewTLSError(config.Host, config.Port,
-					errors.NewValidationError("failed to parse CA certificate"))
+	// Use provided TLSConfig if available (direct passthrough)
+	if config.TLSConfig != nil {
+		// Clone the provided config to avoid modifying the original
+		tlsConfig = config.TLSConfig.Clone()
+	} else {
+		// Create default TLS configuration
+		tlsConfig = &tls.Config{
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: config.InsecureTLS,
+			NextProtos:         []string{"http/1.1"},
+		}
+
+		// Add custom CA certificates if provided
+		if len(config.CustomCACerts) > 0 {
+			rootCAs := x509.NewCertPool()
+			for _, caCert := range config.CustomCACerts {
+				if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
+					return nil, errors.NewTLSError(config.Host, config.Port,
+						errors.NewValidationError("failed to parse CA certificate"))
+				}
 			}
+			tlsConfig.RootCAs = rootCAs
 		}
-		tlsConfig.RootCAs = rootCAs
+
+		// Configure SNI
+		if !config.DisableSNI {
+			serverName := config.SNI
+			if serverName == "" {
+				serverName = config.Host
+			}
+			tlsConfig.ServerName = serverName
+		}
 	}
 
-	// Configure SNI
-	if !config.DisableSNI {
-		serverName := config.SNI
-		if serverName == "" {
-			serverName = config.Host
-		}
-		tlsConfig.ServerName = serverName
-		metadata.TLSServerName = serverName
+	// Store SNI in metadata
+	if tlsConfig.ServerName != "" {
+		metadata.TLSServerName = tlsConfig.ServerName
+	} else if !config.DisableSNI {
+		metadata.TLSServerName = config.Host
 	}
 
 	tlsConn := tls.Client(conn, tlsConfig)
