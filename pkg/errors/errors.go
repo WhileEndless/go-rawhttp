@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 )
 
@@ -30,21 +31,56 @@ const (
 )
 
 // Error represents a structured error with context information.
+// This provides detailed transport-layer error classification for debugging and error handling.
 type Error struct {
-	Type      ErrorType `json:"type"`
-	Message   string    `json:"message"`
-	Cause     error     `json:"cause,omitempty"`
-	Host      string    `json:"host,omitempty"`
-	Port      int       `json:"port,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	Type      ErrorType `json:"type"`      // Error category (dns, tcp, tls, etc.)
+	Op        string    `json:"op"`        // Operation that failed (dial, handshake, read, write, etc.)
+	Message   string    `json:"message"`   // Human-readable error message
+	Cause     error     `json:"cause,omitempty"` // Underlying error
+	Host      string    `json:"host,omitempty"`  // Target host
+	Port      int       `json:"port,omitempty"`  // Target port
+	Addr      string    `json:"addr,omitempty"`  // Full address (host:port)
+	Timestamp time.Time `json:"timestamp"` // When the error occurred
 }
 
+// TransportError is an alias for Error, provided for API compatibility
+// with transport error naming conventions.
+type TransportError = Error
+
 // Error implements the error interface.
+// Format: [type] op addr: message: cause
 func (e *Error) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("[%s] %s: %v", e.Type, e.Message, e.Cause)
+	var parts []string
+
+	// Add type
+	parts = append(parts, fmt.Sprintf("[%s]", e.Type))
+
+	// Add operation if present
+	if e.Op != "" {
+		parts = append(parts, e.Op)
 	}
-	return fmt.Sprintf("[%s] %s", e.Type, e.Message)
+
+	// Add address if present
+	if e.Addr != "" {
+		parts = append(parts, e.Addr)
+	} else if e.Host != "" {
+		if e.Port > 0 {
+			parts = append(parts, fmt.Sprintf("%s:%d", e.Host, e.Port))
+		} else {
+			parts = append(parts, e.Host)
+		}
+	}
+
+	// Build error string
+	errStr := strings.Join(parts, " ")
+	if e.Message != "" {
+		errStr += ": " + e.Message
+	}
+	if e.Cause != nil {
+		errStr += ": " + e.Cause.Error()
+	}
+
+	return errStr
 }
 
 // Unwrap returns the underlying error.
@@ -64,33 +100,41 @@ func (e *Error) Is(target error) bool {
 func NewDNSError(host string, cause error) *Error {
 	return &Error{
 		Type:      ErrorTypeDNS,
+		Op:        "lookup",
 		Message:   fmt.Sprintf("DNS lookup failed for host %s", host),
 		Cause:     cause,
 		Host:      host,
+		Addr:      host,
 		Timestamp: time.Now(),
 	}
 }
 
 // NewConnectionError creates a connection error.
 func NewConnectionError(host string, port int, cause error) *Error {
+	addr := fmt.Sprintf("%s:%d", host, port)
 	return &Error{
 		Type:      ErrorTypeConnection,
-		Message:   fmt.Sprintf("failed to connect to %s:%d", host, port),
+		Op:        "dial",
+		Message:   fmt.Sprintf("failed to connect to %s", addr),
 		Cause:     cause,
 		Host:      host,
 		Port:      port,
+		Addr:      addr,
 		Timestamp: time.Now(),
 	}
 }
 
 // NewTLSError creates a TLS handshake error.
 func NewTLSError(host string, port int, cause error) *Error {
+	addr := fmt.Sprintf("%s:%d", host, port)
 	return &Error{
 		Type:      ErrorTypeTLS,
-		Message:   fmt.Sprintf("TLS handshake failed for %s:%d", host, port),
+		Op:        "handshake",
+		Message:   fmt.Sprintf("TLS handshake failed for %s", addr),
 		Cause:     cause,
 		Host:      host,
 		Port:      port,
+		Addr:      addr,
 		Timestamp: time.Now(),
 	}
 }
@@ -99,7 +143,8 @@ func NewTLSError(host string, port int, cause error) *Error {
 func NewTimeoutError(operation string, timeout time.Duration) *Error {
 	return &Error{
 		Type:      ErrorTypeTimeout,
-		Message:   fmt.Sprintf("%s timed out after %v", operation, timeout),
+		Op:        operation,
+		Message:   fmt.Sprintf("operation timed out after %v", timeout),
 		Timestamp: time.Now(),
 	}
 }
@@ -108,6 +153,7 @@ func NewTimeoutError(operation string, timeout time.Duration) *Error {
 func NewProtocolError(message string, cause error) *Error {
 	return &Error{
 		Type:      ErrorTypeProtocol,
+		Op:        "parse",
 		Message:   message,
 		Cause:     cause,
 		Timestamp: time.Now(),
@@ -116,8 +162,17 @@ func NewProtocolError(message string, cause error) *Error {
 
 // NewIOError creates an I/O error.
 func NewIOError(operation string, cause error) *Error {
+	// Extract operation type (read/write) from message
+	op := operation
+	if strings.Contains(strings.ToLower(operation), "read") {
+		op = "read"
+	} else if strings.Contains(strings.ToLower(operation), "writ") {
+		op = "write"
+	}
+
 	return &Error{
 		Type:      ErrorTypeIO,
+		Op:        op,
 		Message:   fmt.Sprintf("I/O error during %s", operation),
 		Cause:     cause,
 		Timestamp: time.Now(),
@@ -128,6 +183,7 @@ func NewIOError(operation string, cause error) *Error {
 func NewValidationError(message string) *Error {
 	return &Error{
 		Type:      ErrorTypeValidation,
+		Op:        "validate",
 		Message:   message,
 		Timestamp: time.Now(),
 	}

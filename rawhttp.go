@@ -40,6 +40,9 @@ type (
 	// Error represents a structured error with context information.
 	Error = errors.Error
 
+	// TransportError is an alias for Error (transport error naming convention).
+	TransportError = errors.TransportError
+
 	// HTTP2Settings contains HTTP/2 specific configuration
 	HTTP2Settings = client.HTTP2Settings
 )
