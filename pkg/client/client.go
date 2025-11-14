@@ -123,6 +123,16 @@ type HTTP2Settings struct {
 	// Default: true. Disable only for debugging.
 	EnableCompression bool
 
+	// Debug contains HTTP/2 debugging flags (optional, all default to false).
+	// These flags enable detailed logging of HTTP/2 protocol operations.
+	// Production safe - explicit opt-in with zero overhead when disabled.
+	Debug struct {
+		LogFrames   bool `json:"log_frames,omitempty"`   // Log all HTTP/2 frames
+		LogSettings bool `json:"log_settings,omitempty"` // Log SETTINGS frames
+		LogHeaders  bool `json:"log_headers,omitempty"`  // Log HEADERS frames
+		LogData     bool `json:"log_data,omitempty"`     // Log DATA frames
+	} `json:"debug,omitempty"`
+
 	// Deprecated: Use DisableServerPush instead (inverted logic for clarity).
 	EnableServerPush bool
 }

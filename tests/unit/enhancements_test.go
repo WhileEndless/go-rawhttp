@@ -1,7 +1,6 @@
 package unit
 
 import (
-	"crypto/tls"
 	"testing"
 	"time"
 
@@ -10,30 +9,7 @@ import (
 	"github.com/WhileEndless/go-rawhttp/pkg/timing"
 )
 
-// TestTLSConfigPassthrough tests custom TLS configuration
-func TestTLSConfigPassthrough(t *testing.T) {
-	// Create custom TLS config
-	customTLS := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		MaxVersion: tls.VersionTLS13,
-	}
-
-	opts := rawhttp.Options{
-		Scheme:    "https",
-		Host:      "example.com",
-		Port:      443,
-		TLSConfig: customTLS,
-	}
-
-	// Verify TLSConfig is set
-	if opts.TLSConfig == nil {
-		t.Error("TLSConfig should not be nil")
-	}
-
-	if opts.TLSConfig.MinVersion != tls.VersionTLS13 {
-		t.Errorf("Expected MinVersion TLS 1.3, got %d", opts.TLSConfig.MinVersion)
-	}
-}
+// Note: TestTLSConfigPassthrough moved to tls_config_test.go for more comprehensive testing
 
 // TestStandardizedTimingMetrics tests new timing field names
 func TestStandardizedTimingMetrics(t *testing.T) {

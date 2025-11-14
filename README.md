@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -82,9 +82,42 @@ func main() {
 }
 ```
 
-## Recent Enhancements (2025-11-14)
+## Recent Enhancements
 
-go-rawhttp now includes 6 powerful low-level transport enhancements designed for production use:
+### v1.1.1 (2025-11-14)
+
+#### HTTP/2 Debug Flags ⭐⭐
+
+Optional debugging for HTTP/2 protocol issues:
+
+```go
+opts := rawhttp.Options{
+    Protocol: "http/2",
+    HTTP2Settings: &rawhttp.HTTP2Settings{
+        // Production settings...
+        MaxConcurrentStreams: 100,
+        InitialWindowSize:    4194304,
+    },
+}
+
+// Enable selective debugging (explicit opt-in)
+opts.HTTP2Settings.Debug.LogFrames = true    // Log all frames
+opts.HTTP2Settings.Debug.LogSettings = true  // Log SETTINGS frames
+opts.HTTP2Settings.Debug.LogHeaders = false  // Don't log HEADERS
+opts.HTTP2Settings.Debug.LogData = false     // Don't log DATA
+
+resp, _ := sender.Do(ctx, req, opts)
+```
+
+**Features:**
+- ✅ **Zero overhead when disabled** - All flags default to false
+- ✅ **Production safe** - Explicit opt-in required
+- ✅ **Selective logging** - Log only what you need (frames, settings, headers, data)
+- ✅ **Backward compatible** - Old ShowFrameDetails/TraceFrames still supported (deprecated)
+
+### v1.1.0 (2025-11-14)
+
+go-rawhttp includes 6 powerful low-level transport enhancements designed for production use:
 
 ### 1. TLS Configuration Passthrough ⭐⭐⭐⭐⭐
 
@@ -278,17 +311,25 @@ type HTTP2Settings struct {
     EnableServerPush     bool   // Enable HTTP/2 server push (default: false - recommended for security)
     EnableCompression    bool   // Enable HPACK header compression (default: true)
     EnableMultiplexing   bool   // Enable HTTP/2 stream multiplexing (default: false)
-    
+
     // Performance and Resource Limits
     MaxConcurrentStreams uint32 // Max concurrent streams per connection (default: 100)
     InitialWindowSize    uint32 // Flow control window size bytes (default: 4194304 - 4MB, production optimized)
     MaxFrameSize         uint32 // Maximum HTTP/2 frame size bytes (default: 16384 - 16KB, RFC compliant)
     MaxHeaderListSize    uint32 // Maximum header list size bytes (default: 10485760 - 10MB)
     HeaderTableSize      uint32 // HPACK dynamic table size bytes (default: 4096 - 4KB)
-    
-    // Debugging and Monitoring (for development)
-    ShowFrameDetails     bool   // Log detailed frame information (default: false)
-    TraceFrames          bool   // Trace all HTTP/2 frames (default: false)
+
+    // Debugging and Monitoring (NEW in v1.1.1)
+    Debug struct {
+        LogFrames   bool // Log all HTTP/2 frames (default: false)
+        LogSettings bool // Log SETTINGS frames (default: false)
+        LogHeaders  bool // Log HEADERS frames (default: false)
+        LogData     bool // Log DATA frames (default: false)
+    }
+
+    // Deprecated: Use Debug.LogFrames instead
+    ShowFrameDetails     bool   // Log detailed frame information (deprecated)
+    TraceFrames          bool   // Trace all HTTP/2 frames (deprecated)
 }
 ```
 
@@ -491,6 +532,36 @@ opts := rawhttp.Options{
 
 // Sends HTTP/2 over cleartext connection with H2C upgrade
 resp, err := sender.Do(ctx, request, opts)
+```
+
+#### HTTP/2 Debug Logging (NEW in v1.1.1)
+```go
+// Enable selective HTTP/2 debug logging for troubleshooting
+opts := rawhttp.Options{
+    Scheme:   "https",
+    Host:     "example.com",
+    Port:     443,
+    Protocol: "http/2",
+    HTTP2Settings: &rawhttp.HTTP2Settings{
+        MaxConcurrentStreams: 100,
+        InitialWindowSize:    4194304,
+        // Enable debug logging (production safe - zero overhead when disabled)
+        Debug: struct {
+            LogFrames   bool
+            LogSettings bool
+            LogHeaders  bool
+            LogData     bool
+        }{
+            LogFrames:   true,  // Log all HTTP/2 frames
+            LogSettings: true,  // Log SETTINGS frames
+            LogHeaders:  false, // Don't log HEADERS frames
+            LogData:     false, // Don't log DATA frames
+        },
+    },
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// Debug output will be logged to stderr during execution
 ```
 
 ### Large Response Handling
