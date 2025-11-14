@@ -81,15 +81,39 @@ type Response struct {
 	ConnectionReused     bool   // Whether the connection was reused from pool
 }
 
-// HTTP2Settings contains HTTP/2 specific configuration
+// HTTP2Settings contains HTTP/2 specific configuration.
+// These settings map directly to HTTP/2 SETTINGS frame parameters (RFC 7540).
 type HTTP2Settings struct {
-	EnableServerPush     bool
-	EnableCompression    bool
+	// MaxConcurrentStreams limits the number of concurrent streams (SETTINGS_MAX_CONCURRENT_STREAMS).
+	// Default: unlimited. Set to control server resource usage.
 	MaxConcurrentStreams uint32
-	InitialWindowSize    uint32
-	MaxFrameSize         uint32
-	MaxHeaderListSize    uint32
-	HeaderTableSize      uint32
+
+	// InitialWindowSize sets the initial flow control window size (SETTINGS_INITIAL_WINDOW_SIZE).
+	// Default: 65535 bytes. Increase for high-throughput scenarios.
+	InitialWindowSize uint32
+
+	// MaxFrameSize sets the maximum frame payload size (SETTINGS_MAX_FRAME_SIZE).
+	// Default: 16384 bytes. Valid range: 16384 to 16777215.
+	MaxFrameSize uint32
+
+	// MaxHeaderListSize limits the maximum size of header list (SETTINGS_MAX_HEADER_LIST_SIZE).
+	// Default: unlimited. Set to protect against large header attacks.
+	MaxHeaderListSize uint32
+
+	// HeaderTableSize sets the HPACK header compression table size (SETTINGS_HEADER_TABLE_SIZE).
+	// Default: 4096 bytes.
+	HeaderTableSize uint32
+
+	// DisableServerPush disables HTTP/2 server push (sets SETTINGS_ENABLE_PUSH to 0).
+	// Recommended for security and to reduce unwanted traffic.
+	DisableServerPush bool
+
+	// EnableCompression enables HPACK header compression.
+	// Default: true. Disable only for debugging.
+	EnableCompression bool
+
+	// Deprecated: Use DisableServerPush instead (inverted logic for clarity).
+	EnableServerPush bool
 }
 
 // Client implements raw HTTP/1.1 transport.
