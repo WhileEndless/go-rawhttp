@@ -190,7 +190,10 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 	if strings.EqualFold(config.Scheme, "https") {
 		conn, err = t.upgradeTLS(ctx, conn, config, timer, metadata)
 		if err != nil {
-			conn.Close()
+			// conn may be nil if upgradeTLS failed, add defensive check
+			if conn != nil {
+				conn.Close()
+			}
 			return nil, nil, errors.NewTLSError(config.Host, config.Port, err)
 		}
 	} else {
@@ -322,6 +325,7 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 
 	tlsConn := tls.Client(conn, tlsConfig)
 	if err := tlsConn.HandshakeContext(tlsCtx); err != nil {
+		conn.Close() // Close original TCP connection to prevent resource leak
 		return nil, err
 	}
 
