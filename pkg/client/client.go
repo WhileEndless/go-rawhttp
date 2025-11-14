@@ -71,14 +71,25 @@ type Response struct {
 	HTTPVersion string // "HTTP/1.1" or "HTTP/2"
 	Metrics     *timing.Metrics
 
-	// Connection metadata
+	// Connection metadata - Basic network information
 	ConnectedIP          string // Actual IP address connected to (after DNS resolution)
 	ConnectedPort        int    // Actual port connected to
 	NegotiatedProtocol   string // Negotiated protocol (e.g., "HTTP/1.1", "HTTP/2", "h2")
-	TLSVersion           string // TLS version used (e.g., "TLS 1.3")
-	TLSCipherSuite       string // TLS cipher suite used
-	TLSServerName        string // TLS Server Name (SNI)
 	ConnectionReused     bool   // Whether the connection was reused from pool
+
+	// Enhanced connection metadata - Socket-level information
+	LocalAddr    string // Local socket address (e.g., "192.168.1.100:54321")
+	RemoteAddr   string // Remote socket address (e.g., "93.184.216.34:443")
+	ConnectionID uint64 // Unique connection identifier for tracking
+
+	// TLS metadata - Standard TLS information
+	TLSVersion     string // TLS version used (e.g., "TLS 1.3")
+	TLSCipherSuite string // TLS cipher suite used
+	TLSServerName  string // TLS Server Name (SNI)
+
+	// Enhanced TLS metadata - Session information
+	TLSSessionID string // TLS session ID (hex-encoded)
+	TLSResumed   bool   // Whether TLS session was resumed
 }
 
 // HTTP2Settings contains HTTP/2 specific configuration.
@@ -190,14 +201,22 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		// Raw buffer needs extra space for headers, status line, and HTTP overhead
 		// 2x size ensures adequate space for headers + body without frequent disk spilling
 		Raw: buffer.New(opts.BodyMemLimit * 2),
-		// Set connection metadata
+		// Set basic connection metadata
 		ConnectedIP:        connMetadata.ConnectedIP,
 		ConnectedPort:      connMetadata.ConnectedPort,
 		NegotiatedProtocol: connMetadata.NegotiatedProtocol,
-		TLSVersion:         connMetadata.TLSVersion,
-		TLSCipherSuite:     connMetadata.TLSCipherSuite,
-		TLSServerName:      connMetadata.TLSServerName,
 		ConnectionReused:   connMetadata.ConnectionReused,
+		// Set enhanced socket metadata
+		LocalAddr:    connMetadata.LocalAddr,
+		RemoteAddr:   connMetadata.RemoteAddr,
+		ConnectionID: connMetadata.ConnectionID,
+		// Set TLS metadata
+		TLSVersion:     connMetadata.TLSVersion,
+		TLSCipherSuite: connMetadata.TLSCipherSuite,
+		TLSServerName:  connMetadata.TLSServerName,
+		// Set enhanced TLS metadata
+		TLSSessionID: connMetadata.TLSSessionID,
+		TLSResumed:   connMetadata.TLSResumed,
 	}
 
 	// Send request

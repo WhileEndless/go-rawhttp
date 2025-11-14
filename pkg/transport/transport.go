@@ -7,12 +7,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/WhileEndless/go-rawhttp/pkg/errors"
@@ -50,13 +52,25 @@ type Config struct {
 
 // ConnectionMetadata holds metadata about the established connection
 type ConnectionMetadata struct {
+	// Basic connection info
 	ConnectedIP        string
 	ConnectedPort      int
 	NegotiatedProtocol string
-	TLSVersion         string
-	TLSCipherSuite     string
-	TLSServerName      string
 	ConnectionReused   bool
+
+	// Socket-level information
+	LocalAddr    string // Local socket address
+	RemoteAddr   string // Remote socket address
+	ConnectionID uint64 // Unique identifier for this connection
+
+	// TLS information
+	TLSVersion     string
+	TLSCipherSuite string
+	TLSServerName  string
+
+	// Enhanced TLS metadata
+	TLSSessionID string // TLS session ID (hex-encoded)
+	TLSResumed   bool   // Whether TLS session was resumed
 }
 
 // pooledConnection wraps a connection with metadata
@@ -70,10 +84,11 @@ type pooledConnection struct {
 
 // Transport handles the network connection and protocol negotiation.
 type Transport struct {
-	resolver   *net.Resolver
-	connPool   sync.Map // map[string]*pooledConnection (key: "host:port")
-	poolMutex  sync.Mutex
-	maxIdleTime time.Duration // Maximum idle time for pooled connections
+	resolver          *net.Resolver
+	connPool          sync.Map      // map[string]*pooledConnection (key: "host:port")
+	poolMutex         sync.Mutex
+	maxIdleTime       time.Duration // Maximum idle time for pooled connections
+	connectionIDCounter uint64      // Atomic counter for unique connection IDs
 }
 
 // New creates a new Transport instance.
@@ -150,6 +165,16 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 			return nil, nil, errors.NewConnectionError(config.Host, config.Port, err)
 		}
 	}
+
+	// Populate socket-level metadata
+	if conn.LocalAddr() != nil {
+		metadata.LocalAddr = conn.LocalAddr().String()
+	}
+	if conn.RemoteAddr() != nil {
+		metadata.RemoteAddr = conn.RemoteAddr().String()
+	}
+	// Generate unique connection ID
+	metadata.ConnectionID = atomic.AddUint64(&t.connectionIDCounter, 1)
 
 	// Upgrade to TLS if needed
 	if strings.EqualFold(config.Scheme, "https") {
@@ -297,6 +322,22 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	metadata.NegotiatedProtocol = state.NegotiatedProtocol
 	if metadata.NegotiatedProtocol == "" {
 		metadata.NegotiatedProtocol = "HTTP/1.1"
+	}
+
+	// Enhanced TLS metadata
+	metadata.TLSResumed = state.DidResume
+
+	// Extract TLS session ID if available (from TLS <= 1.2)
+	// Note: TLS 1.3 uses session tickets instead of session IDs
+	if len(state.TLSUnique) > 0 {
+		// TLSUnique is the "tls-unique" channel binding value (RFC 5929)
+		// Use it as a proxy for session identification
+		metadata.TLSSessionID = hex.EncodeToString(state.TLSUnique)
+	} else if state.Version <= tls.VersionTLS12 {
+		// For TLS 1.2 and below, we could potentially access session ID
+		// but it's not directly exposed in Go's API
+		// Leave empty for now
+		metadata.TLSSessionID = ""
 	}
 
 	return tlsConn, nil
