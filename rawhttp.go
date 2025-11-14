@@ -13,6 +13,7 @@ import (
 	"github.com/WhileEndless/go-rawhttp/pkg/errors"
 	"github.com/WhileEndless/go-rawhttp/pkg/http2"
 	"github.com/WhileEndless/go-rawhttp/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/pkg/transport"
 )
 
 // Version is the current version of the rawhttp library
@@ -45,6 +46,9 @@ type (
 
 	// HTTP2Settings contains HTTP/2 specific configuration
 	HTTP2Settings = client.HTTP2Settings
+
+	// PoolStats provides connection pool statistics
+	PoolStats = transport.PoolStats
 )
 
 // Re-export error types for convenience
@@ -70,6 +74,12 @@ func NewSender() *Sender {
 		client:      client.New(),
 		http2Client: http2.NewClient(nil),
 	}
+}
+
+// PoolStats returns HTTP/1.1 connection pool statistics.
+// Note: HTTP/2 connection pooling uses separate mechanisms.
+func (s *Sender) PoolStats() PoolStats {
+	return s.client.PoolStats()
 }
 
 // Do executes the HTTP request using raw sockets.

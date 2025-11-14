@@ -89,6 +89,16 @@ type Transport struct {
 	poolMutex         sync.Mutex
 	maxIdleTime       time.Duration // Maximum idle time for pooled connections
 	connectionIDCounter uint64      // Atomic counter for unique connection IDs
+
+	// Pool statistics (atomic counters)
+	statsConnectionsReused uint64 // Lifetime count of reused connections
+}
+
+// PoolStats provides read-only statistics about the connection pool.
+type PoolStats struct {
+	ActiveConns int // Currently in use (checked out)
+	IdleConns   int // Idle in pool (available)
+	TotalReused int // Lifetime reuse count
 }
 
 // New creates a new Transport instance.
@@ -384,6 +394,9 @@ func (t *Transport) getFromPool(key string) (net.Conn, *ConnectionMetadata, bool
 	pooled.inUse = true
 	pooled.lastUsed = time.Now()
 
+	// Increment reuse counter
+	atomic.AddUint64(&t.statsConnectionsReused, 1)
+
 	// Copy metadata
 	metaCopy := pooled.metadata
 	return pooled.conn, &metaCopy, true
@@ -468,6 +481,30 @@ func (t *Transport) isConnectionAlive(conn net.Conn) bool {
 
 	// Any other error means connection is dead
 	return false
+}
+
+// PoolStats returns current connection pool statistics.
+// This is a read-only snapshot of the pool state.
+func (t *Transport) PoolStats() PoolStats {
+	var active, idle int
+
+	t.poolMutex.Lock()
+	t.connPool.Range(func(key, value interface{}) bool {
+		pooled := value.(*pooledConnection)
+		if pooled.inUse {
+			active++
+		} else {
+			idle++
+		}
+		return true
+	})
+	t.poolMutex.Unlock()
+
+	return PoolStats{
+		ActiveConns: active,
+		IdleConns:   idle,
+		TotalReused: int(atomic.LoadUint64(&t.statsConnectionsReused)),
+	}
 }
 
 // cleanupIdleConnections periodically removes idle connections from pool

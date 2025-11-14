@@ -146,6 +146,14 @@ func NewWithTransport(t *transport.Transport) *Client {
 	}
 }
 
+// PoolStats returns connection pool statistics.
+func (c *Client) PoolStats() transport.PoolStats {
+	if c.transport == nil {
+		return transport.PoolStats{}
+	}
+	return c.transport.PoolStats()
+}
+
 // Do executes the HTTP request using raw sockets.
 func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, error) {
 	if c.transport == nil {
