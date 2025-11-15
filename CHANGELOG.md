@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2025-11-15
+
+### Fixed - Enhanced Error Handling
+
+#### 🛡️ Additional Defensive Checks for TLS Error Paths
+
+**Severity:** LOW - Preventive hardening
+
+**Issue:**
+- Added extra defensive nil pointer checks in HTTP/2 transport error paths
+- Improved robustness for edge cases in TLS connection failures
+
+**Changes:**
+- `pkg/http2/transport.go:179-182` - Added defensive nil check before closing connection on settings send failure
+- Enhanced test coverage with comprehensive TLS error scenario tests
+
+**Testing:**
+- Added `TestHTTPSToPlainHTTPServer` - Verifies HTTPS to plain HTTP server doesn't panic
+- Added `TestTLSHandshakeTimeout` - Verifies timeout handling doesn't panic
+- Added `TestContextCancellationDuringTLS` - Verifies context cancellation handling
+- All tests confirm proper error handling without panics
+
+**Impact:**
+- ✅ Additional safety layer for HTTP/2 transport error paths
+- ✅ Comprehensive test coverage for TLS error scenarios
+- ✅ Proactive protection against potential edge cases
+- ✅ No performance impact (checks only in error paths)
+
+**Note:** This release builds upon the critical fixes in v1.1.2, adding an extra layer of defensive programming to ensure maximum robustness in production environments.
+
+### Changed
+
+- Enhanced defensive programming in HTTP/2 transport layer
+- Added comprehensive TLS error handling test suite
+
 ## [1.1.2] - 2025-11-14
 
 ### Fixed - Critical Stability Issues
