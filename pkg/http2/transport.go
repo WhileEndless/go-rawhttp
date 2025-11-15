@@ -176,7 +176,10 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 
 	// Send initial settings (this can block waiting for ACK)
 	if err := t.sendInitialSettings(conn); err != nil {
-		rawConn.Close()
+		// Defensive nil check before closing (rawConn should not be nil here, but being extra safe)
+		if rawConn != nil {
+			rawConn.Close()
+		}
 		return nil, fmt.Errorf("failed to send settings: %w", err)
 	}
 
