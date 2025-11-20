@@ -3,6 +3,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"io"
@@ -62,6 +63,7 @@ type Options struct {
 type Response struct {
 	StatusLine  string
 	StatusCode  int
+	Method      string // HTTP method from the request (e.g., "GET", "POST", "HEAD")
 	Headers     map[string][]string
 	Body        *buffer.Buffer
 	Raw         *buffer.Buffer
@@ -164,6 +166,16 @@ func (c *Client) PoolStats() transport.PoolStats {
 	return c.transport.PoolStats()
 }
 
+// parseMethod extracts the HTTP method from a raw request.
+func parseMethod(req []byte) string {
+	// Find first space - method is everything before it
+	idx := bytes.IndexByte(req, ' ')
+	if idx <= 0 {
+		return ""
+	}
+	return strings.ToUpper(string(req[:idx]))
+}
+
 // Do executes the HTTP request using raw sockets.
 func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, error) {
 	if c.transport == nil {
@@ -212,8 +224,12 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		}
 	}()
 
+	// Parse HTTP method from request for RFC 9110 compliance
+	method := parseMethod(req)
+
 	// Initialize response
 	response := &Response{
+		Method:  method, // Store method for body reading logic
 		Headers: make(map[string][]string),
 		Body:    buffer.New(opts.BodyMemLimit),
 		// Raw buffer needs extra space for headers, status line, and HTTP overhead
@@ -410,9 +426,40 @@ func (c *Client) readHeaders(reader *bufio.Reader, raw *buffer.Buffer) (map[stri
 }
 
 func (c *Client) readBody(reader *bufio.Reader, response *Response, headers map[string][]string) error {
+	statusCode := response.StatusCode
+	method := response.Method
 	transferEncoding := c.getHeaderValue(headers, "Transfer-Encoding")
 	contentLength := c.getHeaderValue(headers, "Content-Length")
 	connectionHeader := c.getHeaderValue(headers, "Connection")
+
+	// RFC 9110 Section 6.4.1: Responses that MUST NOT have a message body
+	// "All 1xx (Informational), 204 (No Content), and 304 (Not Modified) responses
+	// do not include content."
+	// "A response to a HEAD request is identical to a 200 (OK) response, except that
+	// it does not include content."
+	//
+	// IMPORTANT: As a RAW HTTP library (like Burp Suite), we need to handle:
+	// 1. RFC-compliant servers: Content-Length present but NO body → skip (prevent timeout)
+	// 2. RFC-violating servers: Body actually sent → capture it (catch violations)
+	//
+	// Strategy: PEEK at buffered data to detect if server actually sent a body
+	if method == "HEAD" ||
+		(statusCode >= 100 && statusCode < 200) || // 1xx Informational
+		statusCode == 204 || // No Content
+		statusCode == 304 { // Not Modified
+
+		// Check if there's actually buffered data available (peek without consuming)
+		if buffered := reader.Buffered(); buffered > 0 {
+			// Server sent data despite RFC saying not to
+			// This is an RFC violation, but we capture it anyway (raw HTTP library behavior)
+			// Fall through to normal body reading logic
+		} else {
+			// No buffered data = RFC-compliant server
+			// Skip body reading to prevent timeout on keep-alive connections
+			// (Server sent Content-Length for informational purposes only)
+			return nil
+		}
+	}
 
 	switch {
 	case strings.Contains(strings.ToLower(transferEncoding), "chunked"):
@@ -514,10 +561,42 @@ func (c *Client) readFixedBody(r *bufio.Reader, length int64, dst, raw *buffer.B
 
 	_, err := io.CopyN(io.MultiWriter(dst, raw), r, length)
 	if err != nil {
+		// As a RAW HTTP library, we need to handle Content-Length mismatches gracefully
+		// Some servers send incorrect Content-Length headers (RFC violation)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			// Server sent less data than Content-Length indicated
+			// This is a protocol violation, but we accept partial reads
+			// io.CopyN already wrote the available bytes to dst and raw
+			return nil
+		}
 		return errors.NewIOError("reading fixed body", err)
 	}
 
+	// Check if there's more data available than Content-Length specified
+	// This is another common RFC violation (Content-Length too small)
+	if buffered := r.Buffered(); buffered > 0 {
+		// Peek to see if this looks like the start of a new HTTP response
+		if peek, err := r.Peek(min(buffered, 20)); err == nil {
+			// If it starts with "HTTP/", it's a new response (pipelined), don't read it
+			if len(peek) >= 5 && string(peek[:5]) == "HTTP/" {
+				return nil
+			}
+			// Otherwise, it might be extra body data. For keep-alive safety,
+			// we should NOT read it (it could be the next request/response)
+			// This is a trade-off: we might lose some body data, but we preserve
+			// connection integrity for keep-alive scenarios
+		}
+	}
+
 	return nil
+}
+
+// min returns the smaller of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (c *Client) readUntilClose(r *bufio.Reader, connectionHeader string, dst, raw *buffer.Buffer) error {
