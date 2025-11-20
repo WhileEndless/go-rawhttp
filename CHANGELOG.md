@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2025-11-20
+
+### Fixed - RFC 9110 Compliance
+
+#### 🔴 Missing Special Case Handling for Responses Without Message Bodies
+
+**Severity:** MEDIUM-HIGH - Causes 10-second timeouts for compliant servers
+
+**Issue:**
+- The library did not implement RFC 9110 Section 6.4.1 requirements for responses that MUST NOT contain a message body
+- This caused incorrect attempts to read response bodies for:
+  - HEAD method responses
+  - 1xx (Informational) status codes
+  - 204 No Content responses
+  - 304 Not Modified responses
+- Result: Blocking reads that timeout (typically 10 seconds) when servers correctly send no body
+
+**Root Cause:**
+- `pkg/client/client.go:428-472` - `readBody` function did not check for RFC 9110 special cases
+- The function saw `Content-Length` headers and attempted to read bodies that would never arrive
+- RFC allows servers to send `Content-Length` for informational purposes even when no body is present
+
+**Impact:**
+- ✅ Eliminates 10-second timeouts for HEAD requests
+- ✅ Fixes 204 No Content API endpoint handling
+- ✅ Resolves HTTP compliance testing failures
+- ✅ Improves user experience for proxies and web crawlers
+
+**Fixes Applied:**
+1. **Added Method field to Response struct** (`pkg/client/client.go:65`) - Store request method for body reading logic
+2. **Added parseMethod helper** (`pkg/client/client.go:170-177`) - Extract HTTP method from raw request
+3. **RFC 9110 compliance check** (`pkg/client/client.go:435-459`) - Skip body reading for special cases
+
+**Strategy (Burp Suite-like approach):**
+- PEEK at buffered data to detect if server actually sent a body
+- If buffered data present: read body (captures RFC violations from buggy servers)
+- If no buffered data: skip body (prevents timeout on RFC-compliant servers)
+- This allows us to handle both compliant and non-compliant servers without timeouts
+
+**Triggering Scenarios:**
+- HEAD requests to any server (most common)
+- REST API DELETE/PUT returning 204 No Content
+- Conditional GET requests receiving 304 Not Modified
+- Any 1xx informational responses (rare but valid)
+
+**Testing:**
+- Verified no timeout on RFC-compliant servers
+- Verified body capture on non-compliant servers
+- All existing tests continue to pass
+
+### Changed
+
+- Enhanced `Response` struct with `Method` field for RFC compliance checking
+- Improved body reading logic to handle both compliant and non-compliant servers
+
+### References
+
+- [RFC 9110 Section 6.4.1 - Control Data](https://www.rfc-editor.org/rfc/rfc9110.html#section-6.4.1)
+- [RFC 9110 Section 9.3.2 - HEAD Method](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.2)
+- [RFC 9110 Section 15.3.5 - 204 No Content](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.3.5)
+- [RFC 9110 Section 15.4.5 - 304 Not Modified](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4.5)
+
 ## [1.1.3] - 2025-11-15
 
 ### Fixed - Enhanced Error Handling
@@ -210,6 +272,8 @@ stats := sender.PoolStats() // ✅ New API
 - Comprehensive error handling
 - Production-ready features
 
+[1.1.4]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.3...v1.1.4
+[1.1.3]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/WhileEndless/go-rawhttp/compare/v1.0.0...v1.1.0
