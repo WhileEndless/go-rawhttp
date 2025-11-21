@@ -71,6 +71,12 @@ type Config struct {
 	// If nil, default configuration will be used based on other options.
 	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true.
 	TLSConfig *tls.Config
+
+	// SSL/TLS Protocol Version Control (v1.2.0+)
+	MinTLSVersion    uint16                   // Minimum SSL/TLS version
+	MaxTLSVersion    uint16                   // Maximum SSL/TLS version
+	TLSRenegotiation tls.RenegotiationSupport // TLS renegotiation support
+	CipherSuites     []uint16                 // Allowed cipher suites
 }
 
 // ConnectionMetadata holds metadata about the established connection
@@ -350,6 +356,26 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 
 		// Configure SNI (DEF-4: using helper function)
 		ConfigureSNI(tlsConfig, config.SNI, config.DisableSNI, config.Host)
+	}
+
+	// Apply SSL/TLS version control (v1.2.0+)
+	// Priority: TLSConfig values > MinTLSVersion/MaxTLSVersion > defaults
+	if config.MinTLSVersion > 0 && tlsConfig.MinVersion == 0 {
+		tlsConfig.MinVersion = config.MinTLSVersion
+	}
+	if config.MaxTLSVersion > 0 && tlsConfig.MaxVersion == 0 {
+		tlsConfig.MaxVersion = config.MaxTLSVersion
+	}
+
+	// Apply cipher suites if specified (v1.2.0+)
+	if len(config.CipherSuites) > 0 && len(tlsConfig.CipherSuites) == 0 {
+		tlsConfig.CipherSuites = config.CipherSuites
+	}
+
+	// Apply renegotiation support (v1.2.0+)
+	// Default is RenegotiateNever for security
+	if config.TLSRenegotiation != 0 {
+		tlsConfig.Renegotiation = config.TLSRenegotiation
 	}
 
 	// Load client certificate for mutual TLS (mTLS) if provided

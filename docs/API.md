@@ -77,7 +77,7 @@ type Options struct {
     TLSConfig      *tls.Config // Custom TLS configuration (full control)
     CustomCACerts  [][]byte    // Custom root CA certificates in PEM format
 
-    // Client certificate for mutual TLS (mTLS authentication) - v1.1.6+
+    // Client certificate for mutual TLS (mTLS authentication) - v1.2.0+
     // Option 1: Provide PEM-encoded certificate and key directly
     ClientCertPEM  []byte      // Client certificate in PEM format
     ClientKeyPEM   []byte      // Client private key in PEM format (unencrypted)
@@ -85,6 +85,12 @@ type Options struct {
     // Option 2: Provide file paths (will be loaded automatically)
     ClientCertFile string      // Path to client certificate file (.crt, .pem)
     ClientKeyFile  string      // Path to client private key file (.key, .pem)
+
+    // SSL/TLS Protocol Version Control - v1.2.0+
+    MinTLSVersion    uint16                   // Minimum SSL/TLS version (e.g., tls.VersionTLS12)
+    MaxTLSVersion    uint16                   // Maximum SSL/TLS version (e.g., tls.VersionTLS13)
+    TLSRenegotiation tls.RenegotiationSupport // TLS renegotiation (default: RenegotiateNever)
+    CipherSuites     []uint16                 // Allowed cipher suites (default: Go secure defaults)
 
     // Proxy configuration
     ProxyURL       string      // Upstream proxy URL (e.g., "http://proxy:8080")
@@ -364,6 +370,118 @@ if err != nil {
 ```
 
 ## TLS Configuration
+
+### SSL/TLS Version Control
+
+Control SSL/TLS protocol versions for security and compatibility.
+
+#### Basic Version Control
+
+```go
+import "github.com/WhileEndless/go-rawhttp/pkg/tlsconfig"
+
+// Force TLS 1.3 only (most secure)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "modern-server.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionTLS13,
+    MaxTLSVersion: tlsconfig.VersionTLS13,
+}
+
+// TLS 1.2+ (recommended for production)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "api.example.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionTLS12,
+    MaxTLSVersion: tlsconfig.VersionTLS13,
+}
+
+// Legacy SSL 3.0 support (use with extreme caution)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "legacy-system.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionSSL30,
+    InsecureTLS:   true, // Required for deprecated versions
+}
+```
+
+#### Using Security Profiles
+
+```go
+import "github.com/WhileEndless/go-rawhttp/pkg/tlsconfig"
+
+// Apply pre-configured secure profile
+tlsConf := &tls.Config{}
+tlsconfig.ApplyVersionProfile(tlsConf, tlsconfig.ProfileSecure)
+// Result: TLS 1.2-1.3 with secure defaults
+
+opts := rawhttp.Options{
+    Scheme:    "https",
+    Host:      "example.com",
+    Port:      443,
+    TLSConfig: tlsConf,
+}
+
+// Available profiles:
+// - ProfileModern:     TLS 1.3 only
+// - ProfileSecure:     TLS 1.2-1.3 (recommended)
+// - ProfileCompatible: TLS 1.0-1.3
+// - ProfileLegacy:     SSL 3.0-TLS 1.3 (includes insecure versions)
+```
+
+#### Cipher Suite Control
+
+```go
+import "github.com/WhileEndless/go-rawhttp/pkg/tlsconfig"
+
+// Use secure TLS 1.2 cipher suites
+opts := rawhttp.Options{
+    Scheme:       "https",
+    Host:         "api.example.com",
+    Port:         443,
+    CipherSuites: tlsconfig.CipherSuitesTLS12Secure,
+}
+
+// Custom cipher suite selection
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "example.com",
+    Port:   443,
+    CipherSuites: []uint16{
+        tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+    },
+}
+
+// Automatic cipher suite selection based on TLS version
+tlsConf := &tls.Config{}
+tlsconfig.ApplyCipherSuites(tlsConf, tlsconfig.VersionTLS12)
+```
+
+#### TLS Renegotiation
+
+```go
+// Disable renegotiation (default, most secure)
+opts := rawhttp.Options{
+    Scheme:           "https",
+    Host:             "example.com",
+    Port:             443,
+    TLSRenegotiation: tls.RenegotiateNever,
+}
+
+// Allow renegotiation once
+opts := rawhttp.Options{
+    Scheme:           "https",
+    Host:             "example.com",
+    Port:             443,
+    TLSRenegotiation: tls.RenegotiateOnceAsClient,
+}
+```
+
+**Warning**: TLS renegotiation can have security implications. Use `RenegotiateNever` unless specifically required.
 
 ### Client Certificates (mTLS)
 

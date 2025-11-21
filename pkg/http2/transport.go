@@ -296,6 +296,25 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 		tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)
 	}
 
+	// Apply SSL/TLS version control (v1.2.0+)
+	// Priority: TLSConfig values > MinTLSVersion/MaxTLSVersion > defaults
+	if opts.MinTLSVersion > 0 && tlsConfig.MinVersion == 0 {
+		tlsConfig.MinVersion = opts.MinTLSVersion
+	}
+	if opts.MaxTLSVersion > 0 && tlsConfig.MaxVersion == 0 {
+		tlsConfig.MaxVersion = opts.MaxTLSVersion
+	}
+
+	// Apply cipher suites if specified (v1.2.0+)
+	if len(opts.CipherSuites) > 0 && len(tlsConfig.CipherSuites) == 0 {
+		tlsConfig.CipherSuites = opts.CipherSuites
+	}
+
+	// Apply renegotiation support (v1.2.0+)
+	if opts.TLSRenegotiation != 0 {
+		tlsConfig.Renegotiation = opts.TLSRenegotiation
+	}
+
 	// Dial with context
 	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {

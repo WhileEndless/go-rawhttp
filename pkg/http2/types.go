@@ -62,6 +62,12 @@ type Options struct {
 	ClientCertFile string // Path to client certificate file (.crt, .pem)
 	ClientKeyFile  string // Path to client private key file (.key, .pem)
 
+	// SSL/TLS Protocol Version Control (v1.2.0+)
+	MinTLSVersion    uint16                   // Minimum SSL/TLS version
+	MaxTLSVersion    uint16                   // Maximum SSL/TLS version
+	TLSRenegotiation tls.RenegotiationSupport // TLS renegotiation support
+	CipherSuites     []uint16                 // Allowed cipher suites
+
 	// SNI specifies custom Server Name Indication for TLS handshake.
 	// Priority: TLSConfig.ServerName > SNI > Host (if DisableSNI is false)
 	SNI string
