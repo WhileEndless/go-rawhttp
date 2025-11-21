@@ -187,6 +187,9 @@ type Response struct {
 	ServerPush []*PushPromise
 	HPACKStats *HPACKStats
 	FrameStats *FrameStats
+
+	// Timing information
+	TotalTime time.Duration // Total time taken for the request
 }
 
 // PushPromise represents a server push promise
