@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-1.1.3-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-1.1.5-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -83,6 +83,86 @@ func main() {
 ```
 
 ## Recent Enhancements
+
+### v1.1.5 (2025-11-21)
+
+🔴 **CRITICAL FIXES** - TLS and HTTP/2 configuration issues resolved
+
+This release fixes three critical bugs discovered during proxy MITM testing and adds comprehensive SNI configuration support.
+
+#### Fixed Bugs
+
+**Bug #1: TLS InsecureSkipVerify Ignored with Custom TLSConfig (HTTP/1.1)**
+- **Severity**: CRITICAL - Blocks proxy MITM scenarios and self-signed certificate handling
+- **Issue**: When users provided custom `TLSConfig` alongside `InsecureTLS: true`, the `InsecureTLS` flag was completely ignored
+- **Fix**: `InsecureTLS` flag now properly overrides `InsecureSkipVerify` even with custom TLSConfig
+- **Impact**: Enables proxy applications, testing with self-signed certificates, and development environments
+
+**Bug #2: Port Double Formatting in HTTP/2 Error Messages**
+- **Severity**: HIGH - Confusing error messages, breaks error parsing
+- **Issue**: HTTP/2 error messages showed `127.0.0.1:8080:8080` instead of `127.0.0.1:8080`
+- **Fix**: Corrected error message formatting to match HTTP/1.1 consistency
+- **Impact**: Cleaner error messages and proper error message parsing
+
+**Bug #3: HTTP/2 Completely Ignores TLS Configuration**
+- **Severity**: CRITICAL - HTTP/2 unusable with self-signed certificates
+- **Issue**: HTTP/2 transport created hardcoded `tls.Config` with no `InsecureTLS` or `TLSConfig` support
+- **Fix**: Added full TLS configuration support to HTTP/2 (InsecureTLS, TLSConfig, SNI)
+- **Impact**: HTTP/2 now works with self-signed certificates, custom TLS settings, and proxy scenarios
+
+#### New Features
+
+**SNI (Server Name Indication) Configuration**
+- **What's New**: Comprehensive SNI configuration for both HTTP/1.1 and HTTP/2
+- **Features**:
+  - Custom SNI hostnames via `SNI` option
+  - Ability to disable SNI completely with `DisableSNI` flag
+  - Priority-based configuration: `TLSConfig.ServerName` > `SNI` option > `Host` field
+- **Use Cases**: CDN endpoints, virtual hosting, IP-to-hostname mapping, testing scenarios
+
+#### Migration from v1.1.4
+
+**No Breaking Changes** - All fixes maintain backward compatibility.
+
+**New TLS Configuration Features:**
+```go
+// Bug #1 Fix: InsecureTLS now works with custom TLSConfig
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "example.com",
+    Port:        443,
+    InsecureTLS: true, // ✅ Now works with custom TLSConfig
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+        // Custom settings...
+    },
+}
+
+// Bug #3 Fix: HTTP/2 now supports TLS configuration
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "example.com",
+    Port:        443,
+    Protocol:    "http/2",
+    InsecureTLS: true, // ✅ Now works with HTTP/2!
+}
+
+// New Feature: SNI Configuration
+opts := rawhttp.Options{
+    Scheme:     "https",
+    Host:       "203.0.113.10", // CDN IP
+    Port:       443,
+    SNI:        "example.com", // ✅ Custom SNI hostname
+    DisableSNI: false,         // ✅ Or disable SNI completely
+}
+```
+
+**See Also:**
+- Complete bug analysis in CHANGELOG.md
+- New examples: `examples/tls_custom_config.go`, `examples/sni_configuration.go`, `examples/proxy_mitm.go`
+- Comprehensive test coverage: 11 new test functions, all passing
+
+---
 
 ### v1.1.2 (2025-11-14)
 
@@ -309,9 +389,13 @@ type Options struct {
     Host         string        // Target hostname
     Port         int           // Target port
     ConnectIP    string        // Optional: specific IP to connect to
-    SNI          string        // Optional: custom SNI hostname
-    DisableSNI   bool          // Disable SNI extension
-    InsecureTLS  bool          // Skip TLS certificate verification
+
+    // TLS Configuration (v1.1.5+)
+    SNI          string        // Optional: custom SNI hostname (overrides Host for TLS handshake)
+    DisableSNI   bool          // Disable SNI extension completely
+    InsecureTLS  bool          // Skip TLS certificate verification (works with custom TLSConfig in v1.1.5+)
+    TLSConfig    *tls.Config   // Custom TLS configuration (full control over TLS settings)
+
     ConnTimeout  time.Duration // Connection timeout (default: 10s)
     DNSTimeout   time.Duration // DNS resolution timeout (0 = use ConnTimeout)
     ReadTimeout  time.Duration // Read timeout
@@ -321,7 +405,7 @@ type Options struct {
     // Protocol selection
     Protocol     string        // "http/1.1" or "http/2" (auto-detected if not set)
 
-    // HTTP/2 specific options
+    // HTTP/2 specific options (v1.1.5+ supports full TLS configuration)
     HTTP2Settings *HTTP2Settings
 
     // Connection pooling and reuse
@@ -740,6 +824,160 @@ fmt.Printf("Connection Reused: %v\n", resp.ConnectionReused)
 if resp.ConnectedIP != expectedIP {
     log.Printf("Warning: Connected to %s instead of %s", resp.ConnectedIP, expectedIP)
 }
+```
+
+### TLS Configuration (v1.1.5+)
+
+#### InsecureTLS with Custom TLS Config
+```go
+// v1.1.5 Fix: InsecureTLS now works WITH custom TLSConfig
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "self-signed.example.com",
+    Port:        443,
+    InsecureTLS: true, // ✅ Now properly overrides InsecureSkipVerify
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+        MaxVersion: tls.VersionTLS13,
+        // Custom cipher suites, ALPN, etc.
+        CipherSuites: []uint16{
+            tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+        },
+    },
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// ✅ Works correctly: accepts self-signed cert AND uses custom TLS settings
+```
+
+#### HTTP/2 with TLS Configuration
+```go
+// v1.1.5 Fix: HTTP/2 now supports InsecureTLS and custom TLSConfig
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "example.com",
+    Port:        443,
+    Protocol:    "http/2",
+    InsecureTLS: true, // ✅ Now works with HTTP/2!
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+        NextProtos: []string{"h2"}, // HTTP/2 ALPN
+    },
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// ✅ HTTP/2 with self-signed certificates now works
+```
+
+### SNI Configuration (v1.1.5+)
+
+#### Custom SNI Hostname
+```go
+// Useful for CDNs, virtual hosting, IP-to-hostname mapping
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "151.101.1.69", // CDN edge IP
+    Port:        443,
+    SNI:         "example.com", // ✅ Custom SNI for virtual host
+    InsecureTLS: true,
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// Connects to IP but sends SNI: example.com
+```
+
+#### Disable SNI Completely
+```go
+// For legacy servers or special testing scenarios
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "legacy-server.example.com",
+    Port:        443,
+    DisableSNI:  true, // ✅ No SNI extension sent
+    InsecureTLS: true,
+}
+
+resp, err := sender.Do(ctx, request, opts)
+```
+
+#### SNI Priority Order
+```go
+// Priority: TLSConfig.ServerName > SNI option > Host field
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "fallback.example.com", // Priority 3 (lowest)
+    Port:   443,
+    TLSConfig: &tls.Config{
+        ServerName:         "priority1.example.com", // Priority 1 (used)
+        InsecureSkipVerify: true,
+    },
+    SNI: "priority2.example.com", // Priority 2 (ignored when TLSConfig.ServerName set)
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// TLS handshake uses ServerName: priority1.example.com
+```
+
+### Proxy MITM Scenarios (v1.1.5+)
+
+#### Basic MITM with Self-Signed Certificates
+```go
+// Common scenario: intercepting proxy with self-signed certificates
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "api.example.com",
+    Port:        443,
+    InsecureTLS: true, // ✅ Accept proxy's self-signed cert
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+        // Custom cipher suites for proxy compatibility
+        CipherSuites: []uint16{
+            tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        },
+    },
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// ✅ v1.1.5: InsecureTLS works with custom TLS config
+```
+
+#### HTTP/2 MITM with SNI
+```go
+// Advanced: HTTP/2 through MITM proxy with custom SNI
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "151.101.1.69", // CDN IP
+    Port:        443,
+    Protocol:    "http/2",
+    SNI:         "cdn.example.com", // ✅ Custom SNI for CDN
+    InsecureTLS: true,
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS12,
+        NextProtos: []string{"h2"},
+    },
+}
+
+resp, err := sender.Do(ctx, request, opts)
+// ✅ v1.1.5: HTTP/2 + TLS config + SNI all working together
+```
+
+### Complete Examples
+
+See the `examples/` directory for complete working examples:
+
+- **`tls_custom_config.go`** - TLS configuration with InsecureTLS and custom TLSConfig
+- **`sni_configuration.go`** - SNI configuration examples (custom SNI, disable SNI, priority order)
+- **`proxy_mitm.go`** - Proxy MITM scenarios showcasing v1.1.5 bug fixes
+- **`http2_basic.go`** - Basic HTTP/2 usage examples
+- **`http2_advanced.go`** - Advanced HTTP/2 features
+- **`http2_connection_pooling.go`** - HTTP/2 connection pooling and multiplexing
+
+Run examples:
+```bash
+go run examples/tls_custom_config.go
+go run examples/sni_configuration.go
+go run examples/proxy_mitm.go
 ```
 
 ## Testing

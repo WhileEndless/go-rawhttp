@@ -153,6 +153,8 @@ func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
 	// This ensures TLS configuration is passed through to HTTP/2
 	h2opts.InsecureTLS = opts.InsecureTLS
 	h2opts.TLSConfig = opts.TLSConfig
+	h2opts.SNI = opts.SNI
+	h2opts.DisableSNI = opts.DisableSNI
 
 	return h2opts
 }
