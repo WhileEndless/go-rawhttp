@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +60,12 @@ type Config struct {
 
 	// Custom CA certificates (PEM format)
 	CustomCACerts [][]byte
+
+	// Client certificate for mutual TLS (mTLS authentication)
+	ClientCertPEM  []byte // Client certificate in PEM format
+	ClientKeyPEM   []byte // Client private key in PEM format
+	ClientCertFile string // Path to client certificate file
+	ClientKeyFile  string // Path to client private key file
 
 	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
 	// If nil, default configuration will be used based on other options.
@@ -343,6 +350,15 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 
 		// Configure SNI (DEF-4: using helper function)
 		ConfigureSNI(tlsConfig, config.SNI, config.DisableSNI, config.Host)
+	}
+
+	// Load client certificate for mutual TLS (mTLS) if provided
+	clientCert, err := t.loadClientCertificate(config)
+	if err != nil {
+		return nil, errors.NewTLSError(config.Host, config.Port, err)
+	}
+	if clientCert != nil {
+		tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)
 	}
 
 	// Store SNI in metadata
@@ -724,6 +740,47 @@ func (t *Transport) Close() error {
 	})
 
 	return nil
+}
+
+// loadClientCertificate loads client certificate for mTLS from config.
+// Supports both file paths and PEM byte arrays. Returns nil if no client cert is configured.
+func (t *Transport) loadClientCertificate(config Config) (*tls.Certificate, error) {
+	// Check if we have client certificate data
+	hasPEM := len(config.ClientCertPEM) > 0 && len(config.ClientKeyPEM) > 0
+	hasFile := config.ClientCertFile != "" && config.ClientKeyFile != ""
+
+	if !hasPEM && !hasFile {
+		// No client certificate configured
+		return nil, nil
+	}
+
+	var certPEM, keyPEM []byte
+	var err error
+
+	if hasPEM {
+		// Use provided PEM data directly
+		certPEM = config.ClientCertPEM
+		keyPEM = config.ClientKeyPEM
+	} else if hasFile {
+		// Load from files
+		certPEM, err = os.ReadFile(config.ClientCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client certificate file %s: %w", config.ClientCertFile, err)
+		}
+
+		keyPEM, err = os.ReadFile(config.ClientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client key file %s: %w", config.ClientKeyFile, err)
+		}
+	}
+
+	// Parse certificate and key
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse client certificate/key: %w", err)
+	}
+
+	return &cert, nil
 }
 
 // ConfigureSNI applies SNI (Server Name Indication) configuration to a TLS config.

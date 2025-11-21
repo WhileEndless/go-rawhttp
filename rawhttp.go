@@ -162,6 +162,12 @@ func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
 	h2opts.SNI = opts.SNI
 	h2opts.DisableSNI = opts.DisableSNI
 
+	// Pass client certificate configuration for mTLS
+	h2opts.ClientCertPEM = opts.ClientCertPEM
+	h2opts.ClientKeyPEM = opts.ClientKeyPEM
+	h2opts.ClientCertFile = opts.ClientCertFile
+	h2opts.ClientKeyFile = opts.ClientKeyFile
+
 	return h2opts
 }
 
