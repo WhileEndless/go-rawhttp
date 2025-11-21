@@ -229,13 +229,23 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	method := parseMethod(req)
 
 	// Initialize response
+	// Calculate raw buffer size with validation (DEF-2)
+	rawBufferSize := opts.BodyMemLimit
+	if rawBufferSize == 0 {
+		rawBufferSize = 4 * 1024 * 1024 // Default 4MB
+	}
+	// Add overhead for headers but cap at reasonable maximum (100MB)
+	rawBufferSize += 1024 * 1024 // Add 1MB overhead
+	if rawBufferSize > 100*1024*1024 {
+		rawBufferSize = 100 * 1024 * 1024 // Cap at 100MB
+	}
+
 	response := &Response{
 		Method:  method, // Store method for body reading logic
 		Headers: make(map[string][]string),
 		Body:    buffer.New(opts.BodyMemLimit),
 		// Raw buffer needs extra space for headers, status line, and HTTP overhead
-		// 2x size ensures adequate space for headers + body without frequent disk spilling
-		Raw: buffer.New(opts.BodyMemLimit * 2),
+		Raw: buffer.New(rawBufferSize),
 		// Set basic connection metadata
 		ConnectedIP:        connMetadata.ConnectedIP,
 		ConnectedPort:      connMetadata.ConnectedPort,
