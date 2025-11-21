@@ -138,9 +138,9 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 
 	// Calculate total time
 	totalTime := time.Since(startTime)
-	_ = totalTime // Will be used for metrics
 
 	// Add timing information
+	response.TotalTime = totalTime
 	response.FrameStats = &FrameStats{
 		FramesSent:     len(frames),
 		FramesReceived: len(response.Frames),

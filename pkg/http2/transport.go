@@ -24,6 +24,10 @@ type Transport struct {
 	connections map[string]*Connection
 	mu          sync.RWMutex
 	options     *Options
+
+	// Lifecycle management
+	stopChan chan struct{} // Channel to signal background goroutines to stop
+	wg       sync.WaitGroup // WaitGroup to track running goroutines
 }
 
 // NewTransport creates a new HTTP/2 transport
@@ -35,6 +39,7 @@ func NewTransport(opts *Options) *Transport {
 	t := &Transport{
 		connections: make(map[string]*Connection),
 		options:     opts,
+		stopChan:    make(chan struct{}),
 	}
 
 	// Start connection health checker
@@ -45,11 +50,20 @@ func NewTransport(opts *Options) *Transport {
 
 // healthChecker periodically checks connection health
 func (t *Transport) healthChecker() {
+	t.wg.Add(1)
+	defer t.wg.Done()
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		t.checkConnectionHealth()
+	for {
+		select {
+		case <-ticker.C:
+			t.checkConnectionHealth()
+		case <-t.stopChan:
+			// Cleanup and exit
+			return
+		}
 	}
 }
 
@@ -491,8 +505,17 @@ func (t *Transport) waitForSettingsAck(conn *Connection) error {
 	}
 }
 
-// Close closes all connections
+// Close gracefully shuts down the HTTP/2 Transport by stopping background goroutines
+// and closing all active connections. This method should be called when the
+// Transport is no longer needed to prevent goroutine leaks.
 func (t *Transport) Close() error {
+	// Signal health checker goroutine to stop
+	close(t.stopChan)
+
+	// Wait for all goroutines to finish
+	t.wg.Wait()
+
+	// Close all active connections
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

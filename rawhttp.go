@@ -181,7 +181,7 @@ func (s *Sender) convertHTTP2Response(resp *http2.Response) *Response {
 		Raw:         rawBuf,
 		HTTPVersion: resp.HTTPVersion,
 		Metrics: &timing.Metrics{
-			Total: time.Since(time.Now()), // Simplified for now
+			Total: resp.TotalTime, // Use actual timing from HTTP/2 client
 		},
 	}
 }
