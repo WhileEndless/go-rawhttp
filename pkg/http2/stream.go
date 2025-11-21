@@ -85,6 +85,19 @@ func (m *StreamManager) GetStream(streamID uint32) (*Stream, bool) {
 	return stream, exists
 }
 
+// GetStreamState returns the current state of a stream (BUG-7: thread-safe access)
+func (m *StreamManager) GetStreamState(streamID uint32) (StreamState, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stream, exists := m.streams[streamID]
+	if !exists {
+		return StateIdle, fmt.Errorf("stream %d not found", streamID)
+	}
+
+	return stream.State, nil
+}
+
 // UpdateStreamState updates the state of a stream
 func (m *StreamManager) UpdateStreamState(streamID uint32, newState StreamState) error {
 	m.mu.Lock()
@@ -288,11 +301,15 @@ func (p *StreamProcessor) ProcessHeadersFrame(frame *HeadersFrame) error {
 
 	stream.HeadersReceived = true
 
-	// Update state
+	// Update state (BUG-7: use thread-safe state access)
 	if frame.EndStream {
-		if stream.State == StateOpen {
+		currentState, err := p.manager.GetStreamState(frame.StreamId)
+		if err != nil {
+			return err
+		}
+		if currentState == StateOpen {
 			p.manager.UpdateStreamState(frame.StreamId, StateHalfClosedRemote)
-		} else if stream.State == StateHalfClosedLocal {
+		} else if currentState == StateHalfClosedLocal {
 			p.manager.UpdateStreamState(frame.StreamId, StateClosed)
 		}
 	}
@@ -317,11 +334,15 @@ func (p *StreamProcessor) ProcessDataFrame(frame *DataFrame) error {
 	// Update window size
 	p.manager.UpdateWindowSize(frame.StreamId, -int32(len(frame.Data)))
 
-	// Update state if END_STREAM flag is set
+	// Update state if END_STREAM flag is set (BUG-7: use thread-safe state access)
 	if frame.EndStream {
-		if stream.State == StateOpen {
+		currentState, err := p.manager.GetStreamState(frame.StreamId)
+		if err != nil {
+			return err
+		}
+		if currentState == StateOpen {
 			p.manager.UpdateStreamState(frame.StreamId, StateHalfClosedRemote)
-		} else if stream.State == StateHalfClosedLocal {
+		} else if currentState == StateHalfClosedLocal {
 			p.manager.UpdateStreamState(frame.StreamId, StateClosed)
 		}
 	}

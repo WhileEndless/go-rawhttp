@@ -366,8 +366,10 @@ func (c *Client) readResponse(ctx context.Context, conn *Connection, stream *Str
 			conn.Framer.WriteSettingsAck()
 
 		case *http2.WindowUpdateFrame:
-			// Update window size
-			c.streamManager.UpdateWindowSize(f.StreamID, int32(f.Increment))
+			// Update window size (BUG-11: added error handling)
+			if err := c.streamManager.UpdateWindowSize(f.StreamID, int32(f.Increment)); err != nil {
+				return nil, errors.NewProtocolError("window update failed", err)
+			}
 
 		case *http2.PingFrame:
 			// Respond to PING with ACK
