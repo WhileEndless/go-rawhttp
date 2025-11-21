@@ -218,6 +218,27 @@ type FrameStats struct {
 	StreamsClosed  int
 }
 
+// ConnectionPoolStats contains HTTP/2 connection pool statistics (DEF-5)
+type ConnectionPoolStats struct {
+	// Active connections currently in the pool
+	ActiveConnections int
+
+	// Total number of streams across all connections
+	TotalStreams int
+
+	// Connection details (map of address to connection stats)
+	Connections map[string]ConnectionStats
+}
+
+// ConnectionStats contains statistics for a single HTTP/2 connection
+type ConnectionStats struct {
+	Address        string    // Connection address (host:port)
+	StreamsActive  int       // Currently active streams on this connection
+	StreamsTotal   int       // Total streams created on this connection
+	LastActivity   time.Time // Last activity timestamp
+	Ready          bool      // True if connection is ready for use
+}
+
 // Connection represents an HTTP/2 connection
 type Connection struct {
 	Conn           net.Conn // Underlying network connection
