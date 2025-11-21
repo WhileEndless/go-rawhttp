@@ -95,6 +95,12 @@ func (s *Sender) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		// Use HTTP/2 client with options
 		resp, err := s.http2Client.DoWithOptions(ctx, req, opts.Host, opts.Port, opts.Scheme, http2Opts)
 		if err != nil {
+			// DEF-15: Automatic fallback to HTTP/1.1 if server doesn't support HTTP/2
+			// Check if error is due to ALPN negotiation failure
+			if strings.Contains(err.Error(), "does not support HTTP/2") {
+				// Fallback to HTTP/1.1 automatically
+				return s.client.Do(ctx, req, opts)
+			}
 			return nil, err
 		}
 
