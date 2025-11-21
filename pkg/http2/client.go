@@ -42,7 +42,21 @@ func NewClient(opts *Options) *Client {
 }
 
 // Do performs an HTTP/2 request using HTTP/1.1-style raw request format
+// Deprecated: Use DoWithOptions instead to pass TLS configuration
 func (c *Client) Do(ctx context.Context, rawRequest []byte, host string, port int, scheme string) (*Response, error) {
+	return c.DoWithOptions(ctx, rawRequest, host, port, scheme, c.options)
+}
+
+// DoWithOptions performs an HTTP/2 request with custom options
+func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host string, port int, scheme string, opts *Options) (*Response, error) {
+	// Temporarily update transport options for this request
+	originalOpts := c.transport.options
+	if opts != nil {
+		c.transport.options = opts
+	}
+	defer func() {
+		c.transport.options = originalOpts
+	}()
 	// Start timing
 	timer := timing.NewTimer()
 	startTime := time.Now()
@@ -65,7 +79,7 @@ func (c *Client) Do(ctx context.Context, rawRequest []byte, host string, port in
 	timer.StartTCP()
 	conn, err := c.transport.Connect(ctx, host, port, scheme)
 	if err != nil {
-		return nil, errors.NewConnectionError(fmt.Sprintf("%s:%d", host, port), port, err)
+		return nil, errors.NewConnectionError(host, port, err)
 	}
 	// Don't close if connection pooling is enabled
 	if !c.options.ReuseConnection {
@@ -140,7 +154,7 @@ func (c *Client) DoFrames(ctx context.Context, frames []Frame, host string, port
 	// Connect to server
 	conn, err := c.transport.Connect(ctx, host, port, scheme)
 	if err != nil {
-		return nil, errors.NewConnectionError(fmt.Sprintf("%s:%d", host, port), port, err)
+		return nil, errors.NewConnectionError(host, port, err)
 	}
 
 	// Get stream ID from first frame

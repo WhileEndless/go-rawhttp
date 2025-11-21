@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "1.1.1"
+const Version = "1.1.5"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {
@@ -45,7 +45,7 @@ type (
 	TransportError = errors.TransportError
 
 	// HTTP2Settings contains HTTP/2 specific configuration
-	HTTP2Settings = client.HTTP2Settings
+	HTTP2Settings = http2.Options
 
 	// PoolStats provides connection pool statistics
 	PoolStats = transport.PoolStats
@@ -89,8 +89,11 @@ func (s *Sender) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	protocol := s.detectProtocol(req, opts)
 
 	if protocol == "http/2" {
-		// Use HTTP/2 client
-		resp, err := s.http2Client.Do(ctx, req, opts.Host, opts.Port, opts.Scheme)
+		// Convert client.Options to http2.Options
+		http2Opts := s.convertToHTTP2Options(opts)
+
+		// Use HTTP/2 client with options
+		resp, err := s.http2Client.DoWithOptions(ctx, req, opts.Host, opts.Port, opts.Scheme, http2Opts)
 		if err != nil {
 			return nil, err
 		}
@@ -118,6 +121,40 @@ func (s *Sender) detectProtocol(req []byte, opts Options) string {
 
 	// Default to HTTP/1.1
 	return "http/1.1"
+}
+
+// convertToHTTP2Options converts client.Options to http2.Options
+func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
+	var h2opts *http2.Options
+
+	if opts.HTTP2Settings == nil {
+		// Create default HTTP/2 settings
+		h2opts = http2.DefaultOptions()
+	} else {
+		// Convert client.HTTP2Settings to http2.Options
+		// Copy field by field to maintain compatibility
+		h2opts = &http2.Options{
+			MaxConcurrentStreams: opts.HTTP2Settings.MaxConcurrentStreams,
+			InitialWindowSize:    opts.HTTP2Settings.InitialWindowSize,
+			MaxFrameSize:         opts.HTTP2Settings.MaxFrameSize,
+			MaxHeaderListSize:    opts.HTTP2Settings.MaxHeaderListSize,
+			HeaderTableSize:      opts.HTTP2Settings.HeaderTableSize,
+			DisableServerPush:    opts.HTTP2Settings.DisableServerPush,
+			EnableCompression:    opts.HTTP2Settings.EnableCompression,
+		}
+		// Copy Debug fields manually due to different struct tags
+		h2opts.Debug.LogFrames = opts.HTTP2Settings.Debug.LogFrames
+		h2opts.Debug.LogSettings = opts.HTTP2Settings.Debug.LogSettings
+		h2opts.Debug.LogHeaders = opts.HTTP2Settings.Debug.LogHeaders
+		h2opts.Debug.LogData = opts.HTTP2Settings.Debug.LogData
+	}
+
+	// Always override TLS settings from main options
+	// This ensures TLS configuration is passed through to HTTP/2
+	h2opts.InsecureTLS = opts.InsecureTLS
+	h2opts.TLSConfig = opts.TLSConfig
+
+	return h2opts
 }
 
 // convertHTTP2Response converts HTTP/2 response to common Response format

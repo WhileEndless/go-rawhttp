@@ -210,10 +210,43 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 	}
 
 	// Create TLS config with ALPN
-	tlsConfig := &tls.Config{
-		ServerName: serverName,
-		NextProtos: []string{"h2", "http/1.1"},
-		MinVersion: tls.VersionTLS12,
+	var tlsConfig *tls.Config
+
+	// Use custom TLS config if provided
+	if t.options.TLSConfig != nil {
+		// Clone to avoid modifying the original
+		tlsConfig = t.options.TLSConfig.Clone()
+
+		// Ensure HTTP/2 ALPN is included
+		if len(tlsConfig.NextProtos) == 0 {
+			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
+		} else {
+			// Check if h2 is already present
+			hasH2 := false
+			for _, proto := range tlsConfig.NextProtos {
+				if proto == "h2" {
+					hasH2 = true
+					break
+				}
+			}
+			if !hasH2 {
+				// Prepend h2 to the list
+				tlsConfig.NextProtos = append([]string{"h2"}, tlsConfig.NextProtos...)
+			}
+		}
+
+		// Apply InsecureTLS flag (overrides TLSConfig setting)
+		if t.options.InsecureTLS {
+			tlsConfig.InsecureSkipVerify = true
+		}
+	} else {
+		// Use default TLS config
+		tlsConfig = &tls.Config{
+			ServerName:         serverName,
+			NextProtos:         []string{"h2", "http/1.1"},
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: t.options.InsecureTLS,
+		}
 	}
 
 	// Dial with context

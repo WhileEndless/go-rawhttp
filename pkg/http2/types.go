@@ -2,6 +2,7 @@ package http2
 
 import (
 	"bytes"
+	"crypto/tls"
 	"net"
 	"sync"
 	"time"
@@ -37,6 +38,10 @@ type Options struct {
 	// Multiplexing options
 	EnableMultiplexing bool
 	ReuseConnection    bool
+
+	// TLS configuration
+	InsecureTLS bool         // Skip TLS certificate verification (for testing/development)
+	TLSConfig   *tls.Config  // Custom TLS configuration (takes precedence when set)
 
 	// Priority settings
 	Priority *PriorityParam
