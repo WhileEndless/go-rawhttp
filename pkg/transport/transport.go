@@ -370,16 +370,22 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	// Enhanced TLS metadata
 	metadata.TLSResumed = state.DidResume
 
-	// Extract TLS session ID if available (from TLS <= 1.2)
-	// Note: TLS 1.3 uses session tickets instead of session IDs
+	// BUG-10: TLS Session ID handling
+	// IMPORTANT: TLSSessionID is unreliable and should not be used for session tracking.
+	// Reasons:
+	// 1. TLS 1.3 uses session tickets instead of session IDs (not exposed in Go's crypto/tls)
+	// 2. Go's crypto/tls does not expose the actual session ID from TLS 1.2 handshake
+	// 3. state.TLSUnique is a channel binding value (RFC 5929), NOT a session ID
+	//
+	// RECOMMENDATION: Use TLSResumed field instead to detect session resumption.
+	// This field is reliable across all TLS versions.
+	//
+	// We set TLSSessionID to TLSUnique for backward compatibility, but it should
+	// only be used for debugging, not for security-critical session tracking.
 	if len(state.TLSUnique) > 0 {
-		// TLSUnique is the "tls-unique" channel binding value (RFC 5929)
-		// Use it as a proxy for session identification
 		metadata.TLSSessionID = hex.EncodeToString(state.TLSUnique)
-	} else if state.Version <= tls.VersionTLS12 {
-		// For TLS 1.2 and below, we could potentially access session ID
-		// but it's not directly exposed in Go's API
-		// Leave empty for now
+	} else {
+		// TLS 1.3 or session resumption - no TLSUnique available
 		metadata.TLSSessionID = ""
 	}
 
