@@ -109,15 +109,21 @@ func (t *Transport) checkConnectionHealth() {
 	}
 }
 
-// Connect establishes an HTTP/2 connection
-func (t *Transport) Connect(ctx context.Context, host string, port int, scheme string) (*Connection, error) {
+// Connect establishes an HTTP/2 connection with the given options.
+// The opts parameter takes precedence over the transport's default options.
+func (t *Transport) Connect(ctx context.Context, host string, port int, scheme string, opts *Options) (*Connection, error) {
+	// Use provided options or fall back to transport defaults
+	if opts == nil {
+		opts = t.options
+	}
+
 	addr := fmt.Sprintf("%s:%d", host, port)
 
 	// Check for existing connection if reuse is enabled
 	// Use write lock to prevent race conditions when multiple goroutines
 	// try to create a connection simultaneously
 	var needUnlock bool
-	if t.options.ReuseConnection {
+	if opts.ReuseConnection {
 		t.mu.Lock()
 		needUnlock = true
 		if conn, exists := t.connections[addr]; exists && !conn.Closed {
@@ -149,7 +155,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 
 	if scheme == "https" {
 		// TLS connection with ALPN
-		rawConn, err = t.connectTLS(ctx, addr, host)
+		rawConn, err = t.connectTLS(ctx, addr, host, opts)
 	} else {
 		// Plain TCP connection (H2C)
 		rawConn, err = t.connectH2C(ctx, addr)
@@ -168,8 +174,8 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 		Framer:        http2.NewFramer(rawConn, rawConn),
 		Streams:       make(map[uint32]*Stream),
 		NextStreamID:  1, // Client streams use odd IDs
-		MaxConcurrent: t.options.MaxConcurrentStreams,
-		WindowSize:    int32(t.options.InitialWindowSize),
+		MaxConcurrent: opts.MaxConcurrentStreams,
+		WindowSize:    int32(opts.InitialWindowSize),
 		Settings:      make(map[http2.SettingID]uint32),
 		PeerSettings:  make(map[http2.SettingID]uint32),
 		LastActivity:  time.Now(),
@@ -179,8 +185,8 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	// Each connection needs its own HPACK context
 	conn.EncoderBuf = &bytes.Buffer{}
 	conn.Encoder = hpack.NewEncoder(conn.EncoderBuf)
-	conn.Encoder.SetMaxDynamicTableSize(t.options.HeaderTableSize)
-	conn.Decoder = hpack.NewDecoder(t.options.HeaderTableSize, nil)
+	conn.Encoder.SetMaxDynamicTableSize(opts.HeaderTableSize)
+	conn.Decoder = hpack.NewDecoder(opts.HeaderTableSize, nil)
 
 	// Important: Release lock before blocking I/O but don't store connection yet
 	if needUnlock {
@@ -189,7 +195,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	}
 
 	// Send initial settings (this can block waiting for ACK)
-	if err := t.sendInitialSettings(conn); err != nil {
+	if err := t.sendInitialSettings(conn, opts); err != nil {
 		// Defensive nil check before closing (rawConn should not be nil here, but being extra safe)
 		if rawConn != nil {
 			rawConn.Close()
@@ -201,7 +207,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	conn.Ready = true
 
 	// Now store the fully initialized connection
-	if t.options.ReuseConnection {
+	if opts.ReuseConnection {
 		t.mu.Lock()
 		// Check if someone else created a connection while we were initializing
 		if existing, exists := t.connections[addr]; exists && existing.Ready && !existing.Closed {
@@ -218,7 +224,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 }
 
 // connectTLS establishes a TLS connection with ALPN negotiation
-func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (net.Conn, error) {
+func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opts *Options) (net.Conn, error) {
 	dialer := &net.Dialer{
 		Timeout: 30 * time.Second,
 	}
@@ -227,9 +233,9 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 	var tlsConfig *tls.Config
 
 	// Use custom TLS config if provided
-	if t.options.TLSConfig != nil {
+	if opts.TLSConfig != nil {
 		// Clone to avoid modifying the original
-		tlsConfig = t.options.TLSConfig.Clone()
+		tlsConfig = opts.TLSConfig.Clone()
 
 		// Ensure HTTP/2 ALPN is included
 		if len(tlsConfig.NextProtos) == 0 {
@@ -250,7 +256,7 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 		}
 
 		// Apply InsecureTLS flag (overrides TLSConfig setting)
-		if t.options.InsecureTLS {
+		if opts.InsecureTLS {
 			tlsConfig.InsecureSkipVerify = true
 		}
 
@@ -259,9 +265,9 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 		// 2. If DisableSNI is true, leave empty
 		// 3. If SNI option is set, use it
 		// 4. Otherwise use serverName parameter (host)
-		if tlsConfig.ServerName == "" && !t.options.DisableSNI {
-			if t.options.SNI != "" {
-				tlsConfig.ServerName = t.options.SNI
+		if tlsConfig.ServerName == "" && !opts.DisableSNI {
+			if opts.SNI != "" {
+				tlsConfig.ServerName = opts.SNI
 			} else {
 				tlsConfig.ServerName = serverName
 			}
@@ -269,9 +275,9 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 	} else {
 		// Use default TLS config
 		var sniValue string
-		if !t.options.DisableSNI {
-			if t.options.SNI != "" {
-				sniValue = t.options.SNI
+		if !opts.DisableSNI {
+			if opts.SNI != "" {
+				sniValue = opts.SNI
 			} else {
 				sniValue = serverName
 			}
@@ -281,7 +287,7 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 			ServerName:         sniValue,
 			NextProtos:         []string{"h2", "http/1.1"},
 			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: t.options.InsecureTLS,
+			InsecureSkipVerify: opts.InsecureTLS,
 		}
 	}
 
@@ -415,13 +421,13 @@ func (t *Transport) encodeHTTP2Settings() string {
 }
 
 // sendInitialSettings sends initial SETTINGS frame (aligned with Go's approach)
-func (t *Transport) sendInitialSettings(conn *Connection) error {
+func (t *Transport) sendInitialSettings(conn *Connection, opts *Options) error {
 	// Send only the settings that Go's HTTP/2 sends (minimal set)
 	settings := map[http2.SettingID]uint32{
-		http2.SettingEnablePush:        boolToUint32(t.options.EnableServerPush), // Always 0
-		http2.SettingInitialWindowSize: t.options.InitialWindowSize,              // 4MB
-		http2.SettingMaxFrameSize:      t.options.MaxFrameSize,                   // 16KB
-		http2.SettingMaxHeaderListSize: t.options.MaxHeaderListSize,              // 10MB
+		http2.SettingEnablePush:        boolToUint32(opts.EnableServerPush), // Always 0
+		http2.SettingInitialWindowSize: opts.InitialWindowSize,              // 4MB
+		http2.SettingMaxFrameSize:      opts.MaxFrameSize,                   // 16KB
+		http2.SettingMaxHeaderListSize: opts.MaxHeaderListSize,              // 10MB
 	}
 
 	// Store our settings
@@ -441,8 +447,8 @@ func (t *Transport) sendInitialSettings(conn *Connection) error {
 
 	// Send connection-level window update (like Go's HTTP/2 does)
 	// Go sends a WINDOW_UPDATE to increase the connection window size
-	if t.options.InitialWindowSize > 65535 {
-		increment := t.options.InitialWindowSize - 65535
+	if opts.InitialWindowSize > 65535 {
+		increment := opts.InitialWindowSize - 65535
 		if err := conn.Framer.WriteWindowUpdate(0, increment); err != nil {
 			return fmt.Errorf("failed to write connection window update: %w", err)
 		}
