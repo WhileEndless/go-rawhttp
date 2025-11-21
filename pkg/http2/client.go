@@ -77,7 +77,7 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 
 	// Connect to server (connection will be reused if pooling enabled)
 	timer.StartTCP()
-	conn, err := c.transport.Connect(ctx, host, port, scheme)
+	conn, err := c.transport.Connect(ctx, host, port, scheme, opts)
 	if err != nil {
 		return nil, errors.NewConnectionError(host, port, err)
 	}
@@ -152,7 +152,7 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 // DoFrames sends raw frames directly (advanced usage)
 func (c *Client) DoFrames(ctx context.Context, frames []Frame, host string, port int, scheme string) (*Response, error) {
 	// Connect to server
-	conn, err := c.transport.Connect(ctx, host, port, scheme)
+	conn, err := c.transport.Connect(ctx, host, port, scheme, c.options)
 	if err != nil {
 		return nil, errors.NewConnectionError(host, port, err)
 	}
