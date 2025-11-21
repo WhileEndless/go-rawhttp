@@ -52,6 +52,12 @@ func (m *StreamManager) NewStream(request *Request) (*Stream, error) {
 		return nil, fmt.Errorf("maximum concurrent streams (%d) reached", m.maxConcurrent)
 	}
 
+	// Check for stream ID exhaustion (DEF-6)
+	// Stream IDs are uint32, max value is 2^31-1 for client-initiated streams
+	if m.nextStreamID > (1<<31 - 1) {
+		return nil, fmt.Errorf("stream ID exhausted (max 2^31-1), connection must be recreated")
+	}
+
 	// Allocate stream ID
 	streamID := m.nextStreamID
 	m.nextStreamID += 2 // Client uses odd stream IDs

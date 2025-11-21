@@ -3,6 +3,7 @@ package http2
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -284,4 +285,25 @@ func DefaultOptions() *Options {
 	opts.Debug.LogHeaders = false
 	opts.Debug.LogData = false
 	return opts
+}
+
+// ValidateOptions validates HTTP/2 options for RFC 7540 compliance (DEF-9)
+func ValidateOptions(opts *Options) error {
+	if opts == nil {
+		return nil // nil options are OK, defaults will be used
+	}
+
+	// Validate MaxFrameSize (RFC 7540 Section 6.5.2)
+	// MUST be between 16384 (2^14) and 16777215 (2^24-1)
+	if opts.MaxFrameSize > 0 && (opts.MaxFrameSize < 16384 || opts.MaxFrameSize > 16777215) {
+		return fmt.Errorf("MaxFrameSize must be between 16384 and 16777215 (RFC 7540), got %d", opts.MaxFrameSize)
+	}
+
+	// Validate InitialWindowSize (RFC 7540 Section 6.5.2)
+	// MUST NOT exceed 2^31-1
+	if opts.InitialWindowSize > (1<<31 - 1) {
+		return fmt.Errorf("InitialWindowSize must not exceed 2147483647 (2^31-1), got %d", opts.InitialWindowSize)
+	}
+
+	return nil
 }

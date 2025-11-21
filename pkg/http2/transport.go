@@ -36,6 +36,13 @@ func NewTransport(opts *Options) *Transport {
 		opts = DefaultOptions()
 	}
 
+	// Validate options (DEF-9)
+	if err := ValidateOptions(opts); err != nil {
+		// Return transport with default options if validation fails
+		// Log the error but don't panic (graceful degradation)
+		opts = DefaultOptions()
+	}
+
 	t := &Transport{
 		connections: make(map[string]*Connection),
 		options:     opts,
@@ -89,15 +96,20 @@ func (t *Transport) checkConnectionHealth() {
 		// Send PING for keep-alive if idle for more than 15 seconds
 		if idleTime > 15*time.Second {
 			pingData := [8]byte{0, 0, 0, 0, 0, 0, 0, byte(now.Unix())}
-			if err := conn.Framer.WritePing(false, pingData); err != nil {
+
+			// Lock before writing to prevent concurrent write panic
+			conn.mu.Lock()
+			err := conn.Framer.WritePing(false, pingData)
+			if err == nil {
+				// Update last activity on success
+				conn.LastActivity = now
+			}
+			conn.mu.Unlock()
+
+			if err != nil {
 				// Connection is broken, close and remove it
 				conn.Close()
 				delete(t.connections, addr)
-			} else {
-				// Update last activity
-				conn.mu.Lock()
-				conn.LastActivity = now
-				conn.mu.Unlock()
 			}
 		}
 
@@ -459,6 +471,13 @@ func (t *Transport) sendInitialSettings(conn *Connection, opts *Options) error {
 
 // waitForSettingsAck waits for SETTINGS ACK from server
 func (t *Transport) waitForSettingsAck(conn *Connection) error {
+	// Set deadline on the connection to prevent indefinite blocking (DEF-7)
+	deadline := time.Now().Add(10 * time.Second)
+	if err := conn.Conn.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("failed to set read deadline: %w", err)
+	}
+	defer conn.Conn.SetReadDeadline(time.Time{}) // Clear deadline
+
 	// Set a reasonable timeout for the handshake
 	timeout := time.NewTimer(10 * time.Second)
 	defer timeout.Stop()

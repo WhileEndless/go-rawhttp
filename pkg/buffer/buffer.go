@@ -70,18 +70,20 @@ func (b *Buffer) Write(p []byte) (int, error) {
 			return 0, errors.NewIOError("creating temp file", err)
 		}
 
+		// Store file reference immediately to ensure cleanup if Close() is called
+		b.file = tmp
+		b.path = tmp.Name()
+
 		// Write existing buffer content to file
 		if b.buf.Len() > 0 {
 			if _, err := tmp.Write(b.buf.Bytes()); err != nil {
-				tmp.Close()
-				os.Remove(tmp.Name())
+				// Close will clean up the file
+				b.Close()
 				return 0, errors.NewIOError("writing to temp file", err)
 			}
 		}
 
 		b.buf.Reset()
-		b.file = tmp
-		b.path = tmp.Name()
 	}
 
 	// Write new data to file
