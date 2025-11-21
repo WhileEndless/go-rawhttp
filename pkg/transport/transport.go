@@ -24,13 +24,28 @@ import (
 
 // Config holds transport configuration.
 type Config struct {
-	Scheme       string
-	Host         string
-	Port         int
-	ConnectIP    string
-	SNI          string
-	DisableSNI   bool
-	InsecureTLS  bool
+	Scheme     string
+	Host       string
+	Port       int
+	ConnectIP  string // Optional: specific IP to connect to (bypasses DNS)
+
+	// TLS/SNI configuration
+	// SNI specifies custom Server Name Indication for TLS handshake.
+	// Priority: TLSConfig.ServerName > SNI > Host (if DisableSNI is false)
+	SNI string
+
+	// DisableSNI completely disables SNI extension in TLS handshake.
+	// Cannot be used together with SNI option (validation error).
+	DisableSNI bool
+
+	// InsecureTLS skips TLS certificate verification (for testing/development).
+	// IMPORTANT (DEF-13): This flag ALWAYS overrides TLSConfig.InsecureSkipVerify,
+	// even when custom TLSConfig is provided. This is intentional to support proxy
+	// MITM scenarios where you need custom TLS settings AND disabled verification.
+	// Example: InsecureTLS=true + custom TLSConfig → verification is DISABLED.
+	InsecureTLS bool
+
+	// Timeouts
 	ConnTimeout  time.Duration
 	DNSTimeout   time.Duration
 	ReadTimeout  time.Duration
@@ -42,11 +57,12 @@ type Config struct {
 	// Proxy configuration
 	ProxyURL string
 
-	// Custom CA certificates
+	// Custom CA certificates (PEM format)
 	CustomCACerts [][]byte
 
 	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
 	// If nil, default configuration will be used based on other options.
+	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true.
 	TLSConfig *tls.Config
 }
 

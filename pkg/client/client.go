@@ -25,17 +25,34 @@ const (
 
 // Options controls how the Client establishes connections and reads responses.
 type Options struct {
-	Scheme       string
-	Host         string
-	Port         int
-	ConnectIP    string
-	SNI          string
-	DisableSNI   bool
-	InsecureTLS  bool
+	Scheme    string
+	Host      string
+	Port      int
+	ConnectIP string // Optional: specific IP to connect to (bypasses DNS)
+
+	// TLS/SNI Configuration
+	// SNI specifies custom Server Name Indication for TLS handshake.
+	// Priority: TLSConfig.ServerName > SNI > Host (if DisableSNI is false)
+	SNI string
+
+	// DisableSNI completely disables SNI extension in TLS handshake.
+	// Cannot be used together with SNI option (validation error).
+	DisableSNI bool
+
+	// InsecureTLS skips TLS certificate verification (for testing/development).
+	// IMPORTANT (DEF-13): This flag ALWAYS overrides TLSConfig.InsecureSkipVerify,
+	// even when custom TLSConfig is provided. This is intentional to support proxy
+	// MITM scenarios where you need custom TLS settings AND disabled verification.
+	// Example: InsecureTLS=true + custom TLSConfig → verification is DISABLED.
+	InsecureTLS bool
+
+	// Timeouts
 	ConnTimeout  time.Duration
 	DNSTimeout   time.Duration // DNS resolution timeout (0 = use ConnTimeout)
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+
+	// Body memory limit before spilling to disk (default: 4MB)
 	BodyMemLimit int64
 
 	// Protocol selection (http/1.1 or http/2)
@@ -56,6 +73,7 @@ type Options struct {
 
 	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
 	// If nil, default configuration will be used based on other options (InsecureTLS, SNI, etc.).
+	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true (DEF-13).
 	// This provides maximum flexibility for custom TLS versions, cipher suites, client certificates, etc.
 	TLSConfig *tls.Config `json:"-"`
 }
