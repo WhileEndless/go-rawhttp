@@ -28,7 +28,6 @@ MIIEvQIBADANBgkqhk...
 -----END PRIVATE KEY-----`)
 
 	sender := rawhttp.NewSender()
-	defer sender.Close()
 
 	req := []byte(`GET /api/secure HTTP/1.1
 Host: mtls-server.example.com
@@ -54,12 +53,11 @@ Connection: close
 	defer resp.Body.Close()
 
 	fmt.Printf("Status: %d\n", resp.StatusCode)
-	fmt.Printf("Response: %s\n", resp.Body.String())
+	fmt.Printf("Body: %d bytes\n", resp.BodyBytes)
 }
 
 func exampleWithFiles() {
 	sender := rawhttp.NewSender()
-	defer sender.Close()
 
 	req := []byte(`GET /api/secure HTTP/1.1
 Host: mtls-server.example.com
@@ -85,6 +83,7 @@ Connection: close
 	defer resp.Body.Close()
 
 	fmt.Printf("Status: %d\n", resp.StatusCode)
+	fmt.Printf("Body: %d bytes\n", resp.BodyBytes)
 }
 
 // Example 3: mTLS with custom CA certificates (self-signed server)
@@ -97,7 +96,6 @@ func exampleWithCustomCA() {
 	clientKeyPEM := []byte(`... your client key ...`)
 
 	sender := rawhttp.NewSender()
-	defer sender.Close()
 
 	req := []byte(`GET /api/secure HTTP/1.1
 Host: self-signed-mtls.example.com
@@ -125,4 +123,5 @@ Connection: close
 	defer resp.Body.Close()
 
 	fmt.Printf("Status: %d\n", resp.StatusCode)
+	fmt.Printf("Body: %d bytes\n", resp.BodyBytes)
 }

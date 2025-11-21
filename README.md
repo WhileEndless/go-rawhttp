@@ -26,7 +26,7 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 ✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts
 ✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse and observability
 ✅ **Proxy Support** - HTTP, HTTPS, and SOCKS5 upstream proxy support with authentication
-✅ **Custom TLS** - Direct TLS config passthrough for full control (TLS versions, cipher suites, client certs)
+✅ **Custom TLS** - Direct TLS config passthrough for full control (TLS versions, cipher suites, mTLS client certificates)
 ✅ **Connection Metadata** - Detailed socket-level and TLS session info (addresses, session IDs, resumption)
 ✅ **Error Recovery** - Structured error classification with operation tracking for smart retry logic
 ✅ **Performance Monitoring** - Standardized DNS, TCP, TLS, and TTFB timing measurements
@@ -415,7 +415,16 @@ type Options struct {
     ProxyURL     string        // Upstream proxy URL (e.g., "http://proxy:8080" or "socks5://user:pass@proxy:1080")
 
     // Custom TLS configuration
-    CustomCACerts [][]byte     // Custom root CA certificates in PEM format
+    CustomCACerts  [][]byte     // Custom root CA certificates in PEM format
+
+    // Client certificate for mutual TLS (mTLS authentication) - v1.1.6+
+    // Option 1: Provide PEM-encoded certificate and key directly
+    ClientCertPEM  []byte       // Client certificate in PEM format
+    ClientKeyPEM   []byte       // Client private key in PEM format (unencrypted)
+
+    // Option 2: Provide file paths (will be loaded automatically)
+    ClientCertFile string       // Path to client certificate file (.crt, .pem)
+    ClientKeyFile  string       // Path to client private key file (.key, .pem)
 }
 
 type HTTP2Settings struct {
@@ -804,6 +813,116 @@ fmt.Printf("Cipher Suite: %s\n", resp.TLSCipherSuite)
 fmt.Printf("Server Name: %s\n", resp.TLSServerName)
 ```
 
+### Client Certificates (mTLS)
+
+Mutual TLS (mTLS) allows clients to authenticate themselves to the server using client certificates. go-rawhttp supports client certificates through two convenient methods:
+
+#### Option 1: Using PEM Byte Arrays
+```go
+// Your client certificate and key in PEM format
+clientCertPEM := []byte(`-----BEGIN CERTIFICATE-----
+MIICljCCAX4CCQCFcV9...
+-----END CERTIFICATE-----`)
+
+clientKeyPEM := []byte(`-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhk...
+-----END PRIVATE KEY-----`)
+
+sender := rawhttp.NewSender()
+
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "mtls-server.example.com",
+    Port:   443,
+
+    // Client certificate for mTLS authentication
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+resp, err := sender.Do(context.Background(), request, opts)
+if err != nil {
+    log.Fatalf("Request failed: %v", err)
+}
+defer resp.Body.Close()
+
+fmt.Printf("Status: %d\n", resp.StatusCode)
+```
+
+#### Option 2: Using File Paths
+```go
+sender := rawhttp.NewSender()
+
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "mtls-server.example.com",
+    Port:   443,
+
+    // Client certificate from files (loaded automatically)
+    ClientCertFile: "/path/to/client.crt",
+    ClientKeyFile:  "/path/to/client.key",
+}
+
+resp, err := sender.Do(context.Background(), request, opts)
+if err != nil {
+    log.Fatalf("Request failed: %v", err)
+}
+defer resp.Body.Close()
+
+fmt.Printf("Status: %d\n", resp.StatusCode)
+```
+
+#### mTLS with Custom CA (Self-Signed Server)
+```go
+// Combine client certificates with custom CA trust
+caCertPEM, _ := os.ReadFile("server-ca.pem")
+clientCertPEM, _ := os.ReadFile("client.crt")
+clientKeyPEM, _ := os.ReadFile("client.key")
+
+sender := rawhttp.NewSender()
+
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "self-signed-mtls.example.com",
+    Port:   8443,
+
+    // Custom CA to trust server's self-signed cert
+    CustomCACerts: [][]byte{caCertPEM},
+
+    // Client certificate for mTLS authentication
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+resp, err := sender.Do(context.Background(), request, opts)
+if err != nil {
+    log.Fatalf("Request failed: %v", err)
+}
+defer resp.Body.Close()
+
+fmt.Printf("Mutual TLS handshake successful!\n")
+fmt.Printf("TLS Version: %s\n", resp.TLSVersion)
+fmt.Printf("Cipher Suite: %s\n", resp.TLSCipherSuite)
+```
+
+#### mTLS with HTTP/2
+```go
+// Client certificates work seamlessly with HTTP/2
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "h2-mtls.example.com",
+    Port:          443,
+    Protocol:      "http/2",
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+resp, err := sender.Do(context.Background(), request, opts)
+// Supports full HTTP/2 with mTLS authentication
+```
+
+**Note**: Client certificates can also be provided via `TLSConfig.Certificates`, but using `ClientCertPEM`/`ClientKeyPEM` or `ClientCertFile`/`ClientKeyFile` is more convenient.
+
 ### Connection Metadata
 ```go
 resp, err := sender.Do(ctx, request, opts)
@@ -969,6 +1088,7 @@ See the `examples/` directory for complete working examples:
 - **`tls_custom_config.go`** - TLS configuration with InsecureTLS and custom TLSConfig
 - **`sni_configuration.go`** - SNI configuration examples (custom SNI, disable SNI, priority order)
 - **`proxy_mitm.go`** - Proxy MITM scenarios showcasing v1.1.5 bug fixes
+- **`mtls_client_cert_example.go`** - Client certificates for mutual TLS (mTLS) authentication (v1.1.6+)
 - **`http2_basic.go`** - Basic HTTP/2 usage examples
 - **`http2_advanced.go`** - Advanced HTTP/2 features
 - **`http2_connection_pooling.go`** - HTTP/2 connection pooling and multiplexing
@@ -978,6 +1098,7 @@ Run examples:
 go run examples/tls_custom_config.go
 go run examples/sni_configuration.go
 go run examples/proxy_mitm.go
+go run examples/mtls_client_cert_example.go
 ```
 
 ## Testing

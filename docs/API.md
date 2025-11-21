@@ -66,12 +66,31 @@ type Options struct {
     ReadTimeout  time.Duration // Read timeout (0 = no timeout)
     WriteTimeout time.Duration // Write timeout (0 = no timeout)
     BodyMemLimit int64         // Memory limit before spilling to disk (default: 4MB)
-    
+
     // Protocol selection
     Protocol     string        // "http/1.1" or "http/2" (auto-detected if not set)
-    
+
     // HTTP/2 specific options
     HTTP2Settings   *HTTP2Settings // HTTP/2 configuration
+
+    // TLS Configuration
+    TLSConfig      *tls.Config // Custom TLS configuration (full control)
+    CustomCACerts  [][]byte    // Custom root CA certificates in PEM format
+
+    // Client certificate for mutual TLS (mTLS authentication) - v1.1.6+
+    // Option 1: Provide PEM-encoded certificate and key directly
+    ClientCertPEM  []byte      // Client certificate in PEM format
+    ClientKeyPEM   []byte      // Client private key in PEM format (unencrypted)
+
+    // Option 2: Provide file paths (will be loaded automatically)
+    ClientCertFile string      // Path to client certificate file (.crt, .pem)
+    ClientKeyFile  string      // Path to client private key file (.key, .pem)
+
+    // Proxy configuration
+    ProxyURL       string      // Upstream proxy URL (e.g., "http://proxy:8080")
+
+    // Connection pooling
+    ReuseConnection bool       // Enable Keep-Alive and connection pooling
 }
 ```
 
@@ -343,6 +362,109 @@ if err != nil {
     return err
 }
 ```
+
+## TLS Configuration
+
+### Client Certificates (mTLS)
+
+Mutual TLS (mTLS) allows clients to authenticate themselves to the server using client certificates.
+
+#### Using PEM Byte Arrays
+
+```go
+clientCertPEM := []byte(`-----BEGIN CERTIFICATE-----
+MIICljCCAX4CCQCFcV9...
+-----END CERTIFICATE-----`)
+
+clientKeyPEM := []byte(`-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhk...
+-----END PRIVATE KEY-----`)
+
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "mtls-server.example.com",
+    Port:          443,
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+sender := rawhttp.NewSender()
+resp, err := sender.Do(context.Background(), request, opts)
+if err != nil {
+    log.Fatalf("mTLS request failed: %v", err)
+}
+defer resp.Body.Close()
+```
+
+#### Using File Paths
+
+```go
+opts := rawhttp.Options{
+    Scheme:         "https",
+    Host:           "mtls-server.example.com",
+    Port:           443,
+    ClientCertFile: "/path/to/client.crt",
+    ClientKeyFile:  "/path/to/client.key",
+}
+
+sender := rawhttp.NewSender()
+resp, err := sender.Do(context.Background(), request, opts)
+```
+
+#### mTLS with Custom CA
+
+Combine client certificates with custom CA trust for self-signed server certificates:
+
+```go
+caCertPEM, _ := os.ReadFile("server-ca.pem")
+clientCertPEM, _ := os.ReadFile("client.crt")
+clientKeyPEM, _ := os.ReadFile("client.key")
+
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "self-signed-mtls.example.com",
+    Port:          8443,
+    CustomCACerts: [][]byte{caCertPEM},  // Trust server's CA
+    ClientCertPEM: clientCertPEM,        // Client authentication
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+sender := rawhttp.NewSender()
+resp, err := sender.Do(context.Background(), request, opts)
+if err != nil {
+    log.Fatalf("mTLS handshake failed: %v", err)
+}
+defer resp.Body.Close()
+
+fmt.Printf("TLS Version: %s\n", resp.TLSVersion)
+fmt.Printf("Cipher Suite: %s\n", resp.TLSCipherSuite)
+```
+
+#### mTLS with HTTP/2
+
+Client certificates work seamlessly with HTTP/2:
+
+```go
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "h2-mtls.example.com",
+    Port:          443,
+    Protocol:      "http/2",
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+
+sender := rawhttp.NewSender()
+resp, err := sender.Do(context.Background(), request, opts)
+// HTTP/2 with mTLS authentication
+```
+
+**Notes:**
+- Client certificates can also be provided via `TLSConfig.Certificates`
+- PEM data is preferred over file paths for better control
+- Private keys must be unencrypted (no password protection)
+- Supports both HTTP/1.1 and HTTP/2 protocols
+- Certificates are validated during TLS handshake
 
 ## Advanced Usage
 
