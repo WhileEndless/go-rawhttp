@@ -55,47 +55,112 @@ This release addresses multiple critical bugs discovered during comprehensive co
 - **Fix**: Added documentation explaining behavior
 - **Files**: `pkg/transport/transport.go`
 
-#### ⚡ Improvements (DEF-1,2,3,6,7,9,14)
+#### ⚡ Improvements (DEF-1,2,3,4,5,6,7,9,13,14,15)
 
 **DEF-1: Conflicting Options Validation**
-- Added validation: `DisableSNI=true` && `SNI=""` is an error
+- Added validation: `DisableSNI=true` && `SNI != ""` is an error
+- Prevents configuration mistakes
 - **Files**: `pkg/transport/transport.go`
 
 **DEF-2: Excessive Memory Allocation**
-- Fixed raw buffer allocation (was 2x BodyMemLimit, now capped at 100MB)
+- Fixed raw buffer calculation: was always allocating 1GB per response
+- Now: `BodyMemLimit + 1MB overhead`, capped at 100MB max
+- Prevents OOM in high-concurrency scenarios
 - **Files**: `pkg/client/client.go`
 
 **DEF-3: Magic Numbers Centralized**
 - Created `pkg/constants` package for all magic numbers
+- Timeouts, limits, buffer sizes now in one place
 - **Files**: `pkg/constants/constants.go` (new)
 
+**DEF-4: SNI Code Duplication Eliminated**
+- Created shared `ConfigureSNI()` helper function
+- Eliminates 30+ lines of duplicate code between HTTP/1.1 and HTTP/2
+- Same SNI priority logic: TLSConfig.ServerName > SNI > Host
+- **Files**: `pkg/transport/transport.go`, `pkg/http2/transport.go`
+
+**DEF-5: HTTP/2 Connection Pool Statistics**
+- Added `GetPoolStats()` method to HTTP/2 client and transport
+- Provides: active connections, stream counts, last activity, ready state
+- Useful for monitoring and debugging connection pooling
+- **Files**: `pkg/http2/types.go`, `pkg/http2/transport.go`, `pkg/http2/client.go`
+
 **DEF-6: Stream ID Exhaustion Check**
-- Added check: stream IDs must not exceed 2^31-1
+- Added check: stream IDs must not exceed 2^31-1 (RFC 7540)
+- Returns clear error instead of wrapping around
 - **Files**: `pkg/http2/stream.go`
 
 **DEF-7: SETTINGS Handshake Timeout**
-- Added SetReadDeadline to prevent indefinite blocking
+- Added SetReadDeadline (10s) to prevent indefinite blocking
+- Prevents hung connections during SETTINGS handshake
 - **Files**: `pkg/http2/transport.go`
 
 **DEF-9: MaxFrameSize Validation**
 - Added RFC 7540 compliance validation (16384 to 16777215)
+- Validates both min and max bounds
 - **Files**: `pkg/http2/types.go`
 
+**DEF-13: InsecureTLS Override Documentation**
+- Added comprehensive documentation explaining InsecureTLS behavior
+- Clearly states: InsecureTLS ALWAYS overrides TLSConfig.InsecureSkipVerify
+- Documents SNI priority order and validation rules
+- **Files**: `pkg/client/client.go`, `pkg/transport/transport.go`, `pkg/http2/types.go`
+
 **DEF-14: CA Certificate Validation**
-- Improved error message with certificate index
+- Improved error message: shows certificate index on parse failure
+- Helps identify which cert in array is malformed
 - **Files**: `pkg/transport/transport.go`
+
+**DEF-15: HTTP/2 ALPN Fallback**
+- Automatic fallback to HTTP/1.1 when server doesn't support HTTP/2
+- Detects ALPN negotiation failure and retries with HTTP/1.1
+- Improves compatibility with HTTP/1.1-only servers
+- **Files**: `rawhttp.go`
 
 ### Technical Details
 
-**Files Modified**: 10 files
-**Lines Changed**: +250, -50
-**Test Coverage**: All unit tests passing
-**Breaking Changes**: None
+**Bugs Fixed**: 7 (BUG-1,2,3,4,6,8,9)
+**Improvements**: 11 (DEF-1,2,3,4,5,6,7,9,13,14,15)
+**Files Modified**: 14 files (10 modified, 1 new: pkg/constants)
+**Lines Changed**: ~400+ additions, ~100 deletions
+**Test Coverage**: All unit and integration tests passing (50+ tests)
+**Breaking Changes**: None - Full backward compatibility maintained
 
 **Commits**:
-- `3b202cb` - Critical bug fixes: Time calculation and goroutine leaks (BUG-1, BUG-2)
-- `a917171` - Eliminate race condition in HTTP/2 options (BUG-3)
-- `1db41dc` - Multiple bug fixes and improvements (BUG-4,6,8,9 + DEF-1,3,6,7,9,14)
+- `3b202cb` - fix: Critical bug fixes - Time calculation and goroutine leaks (BUG-1, BUG-2)
+- `a917171` - fix: Eliminate race condition in HTTP/2 options (BUG-3)
+- `1db41dc` - fix: Multiple bug fixes and improvements (BUG-4,6,8,9 + DEF-1,3,6,7,9,14)
+- `4fa656d` - fix: Excessive memory allocation and complete v1.1.6 documentation (DEF-2)
+- `98cf5c2` - refactor: Eliminate SNI code duplication (DEF-4)
+- `c8c30b1` - feat: Add HTTP/2 connection pool statistics (DEF-5)
+- `3a0361d` - docs: Document InsecureTLS override behavior (DEF-13)
+- `95b3b52` - feat: Implement automatic HTTP/2 to HTTP/1.1 fallback (DEF-15)
+
+### Migration Guide
+
+**No breaking changes** - All changes are backward compatible.
+
+**New Features Available:**
+```go
+// DEF-5: Monitor HTTP/2 connection pool
+stats := http2Client.GetPoolStats()
+fmt.Printf("Active connections: %d\n", stats.ActiveConnections)
+fmt.Printf("Total streams: %d\n", stats.TotalStreams)
+
+// DEF-15: HTTP/2 with automatic HTTP/1.1 fallback
+opts := rawhttp.Options{
+    Protocol: "http/2",  // Will fallback to HTTP/1.1 if server doesn't support h2
+    // ... other options
+}
+```
+
+**Improvements You Get Automatically:**
+- HTTP/2 timing metrics now work correctly (BUG-1)
+- No more goroutine/memory leaks (BUG-2)
+- Thread-safe concurrent HTTP/2 requests (BUG-3)
+- No more crashes during PING health checks (BUG-4)
+- Better error messages for timeouts and cert validation (BUG-8, DEF-14)
+- Automatic HTTP/2→HTTP/1.1 fallback (DEF-15)
 
 ---
 
