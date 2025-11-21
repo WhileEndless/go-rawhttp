@@ -53,6 +53,15 @@ type Options struct {
 	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true.
 	TLSConfig *tls.Config
 
+	// Client certificate for mutual TLS (mTLS authentication)
+	// Option 1: Provide PEM-encoded certificate and key directly
+	ClientCertPEM []byte // Client certificate in PEM format
+	ClientKeyPEM  []byte // Client private key in PEM format (unencrypted)
+
+	// Option 2: Provide file paths (will be loaded automatically)
+	ClientCertFile string // Path to client certificate file (.crt, .pem)
+	ClientKeyFile  string // Path to client private key file (.key, .pem)
+
 	// SNI specifies custom Server Name Indication for TLS handshake.
 	// Priority: TLSConfig.ServerName > SNI > Host (if DisableSNI is false)
 	SNI string

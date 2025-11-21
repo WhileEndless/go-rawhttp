@@ -71,10 +71,20 @@ type Options struct {
 	// Custom TLS configuration
 	CustomCACerts [][]byte // Custom root CA certificates in PEM format
 
+	// Client certificate for mutual TLS (mTLS authentication)
+	// Option 1: Provide PEM-encoded certificate and key directly
+	ClientCertPEM []byte // Client certificate in PEM format
+	ClientKeyPEM  []byte // Client private key in PEM format (unencrypted)
+
+	// Option 2: Provide file paths (will be loaded automatically)
+	ClientCertFile string // Path to client certificate file (.crt, .pem)
+	ClientKeyFile  string // Path to client private key file (.key, .pem)
+
 	// TLSConfig allows direct passthrough of crypto/tls.Config for full TLS control.
 	// If nil, default configuration will be used based on other options (InsecureTLS, SNI, etc.).
 	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true (DEF-13).
-	// This provides maximum flexibility for custom TLS versions, cipher suites, client certificates, etc.
+	// Note: Client certificates can also be added via TLSConfig.Certificates, but using
+	// ClientCertPEM/ClientKeyPEM or ClientCertFile/ClientKeyFile is more convenient.
 	TLSConfig *tls.Config `json:"-"`
 }
 
@@ -224,6 +234,10 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		ReuseConnection: opts.ReuseConnection,
 		ProxyURL:        opts.ProxyURL,
 		CustomCACerts:   opts.CustomCACerts,
+		ClientCertPEM:   opts.ClientCertPEM,
+		ClientKeyPEM:    opts.ClientKeyPEM,
+		ClientCertFile:  opts.ClientCertFile,
+		ClientKeyFile:   opts.ClientKeyFile,
 		TLSConfig:       opts.TLSConfig,
 	}
 

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -284,6 +285,15 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 		}
 		// Configure SNI (DEF-4: using shared helper function)
 		transport.ConfigureSNI(tlsConfig, opts.SNI, opts.DisableSNI, serverName)
+	}
+
+	// Load client certificate for mutual TLS (mTLS) if provided
+	clientCert, err := t.loadClientCertificate(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+	}
+	if clientCert != nil {
+		tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)
 	}
 
 	// Dial with context
@@ -589,6 +599,47 @@ func (t *Transport) GetPoolStats() *ConnectionPoolStats {
 }
 
 // Helper functions
+
+// loadClientCertificate loads client certificate for mTLS from HTTP/2 options.
+// Reuses the same logic as HTTP/1.1 transport.
+func (t *Transport) loadClientCertificate(opts *Options) (*tls.Certificate, error) {
+	// Check if we have client certificate data
+	hasPEM := len(opts.ClientCertPEM) > 0 && len(opts.ClientKeyPEM) > 0
+	hasFile := opts.ClientCertFile != "" && opts.ClientKeyFile != ""
+
+	if !hasPEM && !hasFile {
+		// No client certificate configured
+		return nil, nil
+	}
+
+	var certPEM, keyPEM []byte
+	var err error
+
+	if hasPEM {
+		// Use provided PEM data directly
+		certPEM = opts.ClientCertPEM
+		keyPEM = opts.ClientKeyPEM
+	} else if hasFile {
+		// Load from files
+		certPEM, err = os.ReadFile(opts.ClientCertFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client certificate file %s: %w", opts.ClientCertFile, err)
+		}
+
+		keyPEM, err = os.ReadFile(opts.ClientKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client key file %s: %w", opts.ClientKeyFile, err)
+		}
+	}
+
+	// Parse certificate and key
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse client certificate/key: %w", err)
+	}
+
+	return &cert, nil
+}
 
 func boolToUint32(b bool) uint32 {
 	if b {
