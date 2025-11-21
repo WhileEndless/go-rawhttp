@@ -394,6 +394,16 @@ func (c *Client) Close() error {
 	return c.transport.Close()
 }
 
+// GetPoolStats returns HTTP/2 connection pool statistics (DEF-5).
+// This provides visibility into connection reuse, active streams, and pool health.
+// Returns nil if connection pooling is not enabled.
+func (c *Client) GetPoolStats() *ConnectionPoolStats {
+	if !c.options.ReuseConnection {
+		return nil
+	}
+	return c.transport.GetPoolStats()
+}
+
 // Helper functions
 
 func convertPriority(p *PriorityParam) http2.PriorityParam {

@@ -552,6 +552,42 @@ func (t *Transport) CloseConnection(addr string) error {
 	return nil
 }
 
+// GetPoolStats returns current HTTP/2 connection pool statistics (DEF-5).
+// This provides visibility into connection reuse, active streams, and pool health.
+func (t *Transport) GetPoolStats() *ConnectionPoolStats {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	stats := &ConnectionPoolStats{
+		ActiveConnections: len(t.connections),
+		Connections:       make(map[string]ConnectionStats),
+	}
+
+	totalStreams := 0
+	for addr, conn := range t.connections {
+		conn.mu.RLock()
+		activeStreams := 0
+		for _, stream := range conn.Streams {
+			if !stream.Closed {
+				activeStreams++
+			}
+		}
+		totalStreams += len(conn.Streams)
+
+		stats.Connections[addr] = ConnectionStats{
+			Address:       addr,
+			StreamsActive: activeStreams,
+			StreamsTotal:  len(conn.Streams),
+			LastActivity:  conn.LastActivity,
+			Ready:         conn.Ready,
+		}
+		conn.mu.RUnlock()
+	}
+
+	stats.TotalStreams = totalStreams
+	return stats
+}
+
 // Helper functions
 
 func boolToUint32(b bool) uint32 {
