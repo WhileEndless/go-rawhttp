@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WhileEndless/go-rawhttp/pkg/transport"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 )
@@ -272,35 +273,17 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 			tlsConfig.InsecureSkipVerify = true
 		}
 
-		// Configure ServerName (SNI) with priority:
-		// 1. If user set ServerName in TLSConfig, keep it (highest priority)
-		// 2. If DisableSNI is true, leave empty
-		// 3. If SNI option is set, use it
-		// 4. Otherwise use serverName parameter (host)
-		if tlsConfig.ServerName == "" && !opts.DisableSNI {
-			if opts.SNI != "" {
-				tlsConfig.ServerName = opts.SNI
-			} else {
-				tlsConfig.ServerName = serverName
-			}
-		}
+		// Configure SNI (DEF-4: using shared helper function)
+		transport.ConfigureSNI(tlsConfig, opts.SNI, opts.DisableSNI, serverName)
 	} else {
 		// Use default TLS config
-		var sniValue string
-		if !opts.DisableSNI {
-			if opts.SNI != "" {
-				sniValue = opts.SNI
-			} else {
-				sniValue = serverName
-			}
-		}
-
 		tlsConfig = &tls.Config{
-			ServerName:         sniValue,
 			NextProtos:         []string{"h2", "http/1.1"},
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: opts.InsecureTLS,
 		}
+		// Configure SNI (DEF-4: using shared helper function)
+		transport.ConfigureSNI(tlsConfig, opts.SNI, opts.DisableSNI, serverName)
 	}
 
 	// Dial with context

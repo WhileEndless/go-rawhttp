@@ -325,14 +325,8 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 			tlsConfig.RootCAs = rootCAs
 		}
 
-		// Configure SNI
-		if !config.DisableSNI {
-			serverName := config.SNI
-			if serverName == "" {
-				serverName = config.Host
-			}
-			tlsConfig.ServerName = serverName
-		}
+		// Configure SNI (DEF-4: using helper function)
+		ConfigureSNI(tlsConfig, config.SNI, config.DisableSNI, config.Host)
 	}
 
 	// Store SNI in metadata
@@ -708,4 +702,35 @@ func (t *Transport) Close() error {
 	})
 
 	return nil
+}
+
+// ConfigureSNI applies SNI (Server Name Indication) configuration to a TLS config.
+// It follows this priority order:
+// 1. If tlsConfig.ServerName is already set, it's preserved (highest priority)
+// 2. If disableSNI is true, ServerName is left empty
+// 3. If customSNI is set, it's used
+// 4. Otherwise, fallbackHost is used as ServerName
+//
+// This function eliminates code duplication between HTTP/1.1 and HTTP/2 transports (DEF-4).
+func ConfigureSNI(tlsConfig *tls.Config, customSNI string, disableSNI bool, fallbackHost string) {
+	if tlsConfig == nil {
+		return
+	}
+
+	// If ServerName is already set (user provided it in TLSConfig), keep it
+	if tlsConfig.ServerName != "" {
+		return
+	}
+
+	// If SNI is disabled, leave ServerName empty
+	if disableSNI {
+		return
+	}
+
+	// Use custom SNI if provided, otherwise use fallback host
+	if customSNI != "" {
+		tlsConfig.ServerName = customSNI
+	} else {
+		tlsConfig.ServerName = fallbackHost
+	}
 }
