@@ -42,6 +42,8 @@ type Options struct {
 	// TLS configuration
 	InsecureTLS bool         // Skip TLS certificate verification (for testing/development)
 	TLSConfig   *tls.Config  // Custom TLS configuration (takes precedence when set)
+	SNI         string       // Custom Server Name Indication (SNI) for TLS
+	DisableSNI  bool         // Disable SNI in TLS handshake
 
 	// Priority settings
 	Priority *PriorityParam

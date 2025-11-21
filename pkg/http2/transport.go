@@ -239,10 +239,32 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string) (ne
 		if t.options.InsecureTLS {
 			tlsConfig.InsecureSkipVerify = true
 		}
+
+		// Configure ServerName (SNI) with priority:
+		// 1. If user set ServerName in TLSConfig, keep it (highest priority)
+		// 2. If DisableSNI is true, leave empty
+		// 3. If SNI option is set, use it
+		// 4. Otherwise use serverName parameter (host)
+		if tlsConfig.ServerName == "" && !t.options.DisableSNI {
+			if t.options.SNI != "" {
+				tlsConfig.ServerName = t.options.SNI
+			} else {
+				tlsConfig.ServerName = serverName
+			}
+		}
 	} else {
 		// Use default TLS config
+		var sniValue string
+		if !t.options.DisableSNI {
+			if t.options.SNI != "" {
+				sniValue = t.options.SNI
+			} else {
+				sniValue = serverName
+			}
+		}
+
 		tlsConfig = &tls.Config{
-			ServerName:         serverName,
+			ServerName:         sniValue,
 			NextProtos:         []string{"h2", "http/1.1"},
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: t.options.InsecureTLS,
