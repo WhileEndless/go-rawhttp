@@ -86,6 +86,24 @@ type Options struct {
 	// Note: Client certificates can also be added via TLSConfig.Certificates, but using
 	// ClientCertPEM/ClientKeyPEM or ClientCertFile/ClientKeyFile is more convenient.
 	TLSConfig *tls.Config `json:"-"`
+
+	// SSL/TLS Protocol Version Control (v1.2.0+)
+	// These provide user-friendly version control without requiring direct TLSConfig manipulation
+	// Priority: TLSConfig.MinVersion/MaxVersion > MinTLSVersion/MaxTLSVersion > defaults
+	MinTLSVersion uint16 // Minimum SSL/TLS version (e.g., tls.VersionTLS12, tls.VersionSSL30)
+	MaxTLSVersion uint16 // Maximum SSL/TLS version (e.g., tls.VersionTLS13)
+
+	// SSL/TLS Renegotiation Support (v1.2.0+)
+	// Controls whether TLS renegotiation is allowed (default: never)
+	// Options: tls.RenegotiateNever, tls.RenegotiateOnceAsClient, tls.RenegotiateFreelyAsClient
+	// WARNING: Renegotiation can have security implications, use with caution
+	TLSRenegotiation tls.RenegotiationSupport
+
+	// Cipher Suite Control (v1.2.0+)
+	// Specify allowed cipher suites in order of preference
+	// If nil, Go's default secure cipher suites are used
+	// Use CipherSuites field in TLSConfig for more control
+	CipherSuites []uint16
 }
 
 // Response represents a parsed HTTP response.

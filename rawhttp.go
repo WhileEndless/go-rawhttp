@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "1.1.6"
+const Version = "1.2.0"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {
@@ -167,6 +167,12 @@ func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
 	h2opts.ClientKeyPEM = opts.ClientKeyPEM
 	h2opts.ClientCertFile = opts.ClientCertFile
 	h2opts.ClientKeyFile = opts.ClientKeyFile
+
+	// Pass SSL/TLS version control and cipher suites (v1.2.0+)
+	h2opts.MinTLSVersion = opts.MinTLSVersion
+	h2opts.MaxTLSVersion = opts.MaxTLSVersion
+	h2opts.TLSRenegotiation = opts.TLSRenegotiation
+	h2opts.CipherSuites = opts.CipherSuites
 
 	return h2opts
 }

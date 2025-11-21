@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-1.1.5-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -83,6 +83,144 @@ func main() {
 ```
 
 ## Recent Enhancements
+
+### v1.2.0 (2025-11-21)
+
+🚀 **MAJOR RELEASE** - Comprehensive SSL/TLS control and mTLS authentication
+
+This major release adds extensive SSL/TLS protocol version control, cipher suite management, and client certificate (mTLS) authentication support for both HTTP/1.1 and HTTP/2.
+
+#### New Features
+
+**1. SSL/TLS Protocol Version Control**
+- Full control over SSL/TLS versions (SSL 3.0, TLS 1.0, TLS 1.1, TLS 1.2, TLS 1.3)
+- User-friendly version fields: `MinTLSVersion` and `MaxTLSVersion`
+- Pre-configured security profiles (Modern, Secure, Compatible, Legacy)
+- Helper package `pkg/tlsconfig` with version constants and utilities
+
+**2. Cipher Suite Management**
+- Specify allowed cipher suites in order of preference
+- Pre-defined secure cipher suite sets for each TLS version
+- Helper functions for cipher suite names and recommendations
+- Automatic cipher suite selection based on TLS version
+
+**3. TLS Renegotiation Support**
+- Configure TLS renegotiation behavior for security
+- Options: `RenegotiateNever`, `RenegotiateOnceAsClient`, `RenegotiateFreelyAsClient`
+- Default: `RenegotiateNever` for maximum security
+
+**4. Client Certificate Authentication (mTLS)**
+- Full mutual TLS support for both HTTP/1.1 and HTTP/2
+- Two loading methods: PEM byte arrays or file paths
+- Seamless integration with custom CA certificates
+- Complete test coverage with 6 test suites
+
+#### Usage Examples
+
+**SSL/TLS Version Control:**
+```go
+import "github.com/WhileEndless/go-rawhttp/pkg/tlsconfig"
+
+// Force TLS 1.3 only (most secure)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "modern-server.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionTLS13,
+    MaxTLSVersion: tlsconfig.VersionTLS13,
+}
+
+// TLS 1.2+ (recommended for production)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "api.example.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionTLS12,
+    MaxTLSVersion: tlsconfig.VersionTLS13,
+}
+
+// Legacy SSL 3.0 support (use with caution)
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "legacy-system.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionSSL30,
+    InsecureTLS:   true, // Required for deprecated versions
+}
+```
+
+**Cipher Suite Control:**
+```go
+// Use secure TLS 1.2 cipher suites
+opts := rawhttp.Options{
+    Scheme:       "https",
+    Host:         "api.example.com",
+    Port:         443,
+    CipherSuites: tlsconfig.CipherSuitesTLS12Secure,
+}
+
+// Custom cipher suite selection
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "example.com",
+    Port:   443,
+    CipherSuites: []uint16{
+        tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+        tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+    },
+}
+```
+
+**Using Security Profiles:**
+```go
+// Apply pre-configured security profile
+tlsConf := &tls.Config{}
+tlsconfig.ApplyVersionProfile(tlsConf, tlsconfig.ProfileSecure)
+// Result: TLS 1.2-1.3 with secure cipher suites
+
+opts := rawhttp.Options{
+    Scheme:    "https",
+    Host:      "example.com",
+    Port:      443,
+    TLSConfig: tlsConf,
+}
+```
+
+**Client Certificates (mTLS):**
+```go
+// Load client certificate for mutual TLS
+clientCertPEM, _ := os.ReadFile("client.crt")
+clientKeyPEM, _ := os.ReadFile("client.key")
+
+opts := rawhttp.Options{
+    Scheme:        "https",
+    Host:          "mtls-server.com",
+    Port:          443,
+    MinTLSVersion: tlsconfig.VersionTLS12,
+    ClientCertPEM: clientCertPEM,
+    ClientKeyPEM:  clientKeyPEM,
+}
+```
+
+#### Migration from v1.1.6
+
+**No Breaking Changes** - All existing code continues to work without modification.
+
+**New Optional Fields:**
+- `MinTLSVersion` - Minimum TLS version (default: TLS 1.2)
+- `MaxTLSVersion` - Maximum TLS version (default: highest available)
+- `CipherSuites` - Custom cipher suites (default: Go's secure defaults)
+- `TLSRenegotiation` - Renegotiation support (default: RenegotiateNever)
+- `ClientCertPEM` / `ClientKeyPEM` - mTLS PEM data
+- `ClientCertFile` / `ClientKeyFile` - mTLS file paths
+
+#### See Also
+- Complete examples: `examples/mtls_client_cert_example.go`
+- SSL/TLS tests: `tests/unit/ssl_tls_test.go` (8 test suites, all passing)
+- mTLS tests: `tests/unit/mtls_test.go` (6 test suites, all passing)
+- Helper package: `pkg/tlsconfig` with constants and utilities
+
+---
 
 ### v1.1.5 (2025-11-21)
 
@@ -417,7 +555,7 @@ type Options struct {
     // Custom TLS configuration
     CustomCACerts  [][]byte     // Custom root CA certificates in PEM format
 
-    // Client certificate for mutual TLS (mTLS authentication) - v1.1.6+
+    // Client certificate for mutual TLS (mTLS authentication) - v1.2.0+
     // Option 1: Provide PEM-encoded certificate and key directly
     ClientCertPEM  []byte       // Client certificate in PEM format
     ClientKeyPEM   []byte       // Client private key in PEM format (unencrypted)
@@ -425,6 +563,12 @@ type Options struct {
     // Option 2: Provide file paths (will be loaded automatically)
     ClientCertFile string       // Path to client certificate file (.crt, .pem)
     ClientKeyFile  string       // Path to client private key file (.key, .pem)
+
+    // SSL/TLS Protocol Version Control - v1.2.0+
+    MinTLSVersion    uint16                   // Minimum SSL/TLS version (e.g., tls.VersionTLS12)
+    MaxTLSVersion    uint16                   // Maximum SSL/TLS version (e.g., tls.VersionTLS13)
+    TLSRenegotiation tls.RenegotiationSupport // TLS renegotiation (default: RenegotiateNever)
+    CipherSuites     []uint16                 // Allowed cipher suites (default: Go secure defaults)
 }
 
 type HTTP2Settings struct {
