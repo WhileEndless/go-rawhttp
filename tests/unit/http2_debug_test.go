@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/pkg/client"
 )
 
 // TestHTTP2DebugFlags tests the new HTTP/2 Debug structure
 func TestHTTP2DebugFlags(t *testing.T) {
 	t.Run("DefaultDebugFlags", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 
 		// All debug flags should default to false
 		if settings.Debug.LogFrames {
@@ -27,7 +28,7 @@ func TestHTTP2DebugFlags(t *testing.T) {
 	})
 
 	t.Run("EnableLogFrames", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 		settings.Debug.LogFrames = true
 
 		if !settings.Debug.LogFrames {
@@ -47,7 +48,7 @@ func TestHTTP2DebugFlags(t *testing.T) {
 	})
 
 	t.Run("EnableLogSettings", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 		settings.Debug.LogSettings = true
 
 		if !settings.Debug.LogSettings {
@@ -67,7 +68,7 @@ func TestHTTP2DebugFlags(t *testing.T) {
 	})
 
 	t.Run("EnableLogHeaders", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 		settings.Debug.LogHeaders = true
 
 		if !settings.Debug.LogHeaders {
@@ -87,7 +88,7 @@ func TestHTTP2DebugFlags(t *testing.T) {
 	})
 
 	t.Run("EnableLogData", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 		settings.Debug.LogData = true
 
 		if !settings.Debug.LogData {
@@ -107,7 +108,7 @@ func TestHTTP2DebugFlags(t *testing.T) {
 	})
 
 	t.Run("EnableAllDebugFlags", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 		settings.Debug.LogFrames = true
 		settings.Debug.LogSettings = true
 		settings.Debug.LogHeaders = true
@@ -150,7 +151,7 @@ func TestHTTP2DebugInOptions(t *testing.T) {
 			Host:     "example.com",
 			Port:     443,
 			Protocol: "http/2",
-			HTTP2Settings: &rawhttp.HTTP2Settings{
+			HTTP2Settings: &client.HTTP2Settings{
 				MaxConcurrentStreams: 100,
 			},
 		}
@@ -183,7 +184,7 @@ func TestHTTP2DebugProductionSafe(t *testing.T) {
 			Host:     "api.production.com",
 			Port:     443,
 			Protocol: "http/2",
-			HTTP2Settings: &rawhttp.HTTP2Settings{
+			HTTP2Settings: &client.HTTP2Settings{
 				MaxConcurrentStreams: 100,
 				InitialWindowSize:    4194304,
 				DisableServerPush:    true,
@@ -213,7 +214,7 @@ func TestHTTP2DebugProductionSafe(t *testing.T) {
 			Host:     "debug.example.com",
 			Port:     443,
 			Protocol: "http/2",
-			HTTP2Settings: &rawhttp.HTTP2Settings{
+			HTTP2Settings: &client.HTTP2Settings{
 				MaxConcurrentStreams: 100,
 			},
 		}
@@ -234,7 +235,7 @@ func TestHTTP2DebugProductionSafe(t *testing.T) {
 // TestHTTP2DebugStructAlignment tests that Debug struct is properly aligned
 func TestHTTP2DebugStructAlignment(t *testing.T) {
 	t.Run("DebugStructSize", func(t *testing.T) {
-		settings := &rawhttp.HTTP2Settings{}
+		settings := &client.HTTP2Settings{}
 
 		// Access all fields to ensure they're accessible
 		_ = settings.Debug.LogFrames
@@ -284,7 +285,7 @@ func TestHTTP2DebugSelectiveLogging(t *testing.T) {
 
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
-			settings := &rawhttp.HTTP2Settings{}
+			settings := &client.HTTP2Settings{}
 			settings.Debug.LogFrames = sc.logFrames
 			settings.Debug.LogSettings = sc.logSettings
 			settings.Debug.LogHeaders = sc.logHeaders

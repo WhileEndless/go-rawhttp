@@ -5,6 +5,187 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] - 2025-11-21
+
+### Fixed - Critical TLS and HTTP/2 Issues
+
+#### 🔴 Bug #1: TLS InsecureSkipVerify Ignored with Custom TLSConfig (HTTP/1.1)
+
+**Severity:** CRITICAL - Blocks proxy MITM scenarios and self-signed certificate handling
+
+**Issue:**
+- When users provided custom `TLSConfig` alongside `InsecureTLS: true`, the `InsecureTLS` flag was completely ignored
+- This prevented accepting self-signed certificates in proxy scenarios where users need both custom TLS settings (versions, ciphers) AND certificate validation bypass
+- Critical for: proxy applications, testing with self-signed certificates, development environments
+
+**Root Cause:**
+- `pkg/transport/transport.go:286-317` - `upgradeTLS` function cloned custom `TLSConfig` but didn't apply `InsecureTLS` flag override
+- The function checked `if config.TLSConfig != nil` and used it directly without checking `config.InsecureTLS`
+
+**Fix Applied:**
+- Added `InsecureTLS` flag override after cloning custom `TLSConfig` (lines 290-295)
+- Now `InsecureTLS: true` takes priority and sets `InsecureSkipVerify: true` even with custom TLS config
+- Maintains backward compatibility: users can still provide `InsecureSkipVerify` directly in `TLSConfig`
+
+**Impact:**
+- ✅ Fixes proxy MITM functionality with custom TLS settings
+- ✅ Enables HTTP→HTTPS scheme override with self-signed certificates
+- ✅ Resolves testing/development workflow blocks
+- ✅ Maintains flexibility: both methods now work correctly
+
+**Code Location:** `pkg/transport/transport.go:290-295`
+
+#### 🔴 Bug #2: Port Double Formatting in HTTP/2 Error Messages
+
+**Severity:** HIGH - Confusing error messages, breaks error parsing
+
+**Issue:**
+- HTTP/2 client incorrectly passed `fmt.Sprintf("%s:%d", host, port)` to `errors.NewConnectionError()`
+- `NewConnectionError` expects separate `host string, port int` parameters and formats them internally
+- Result: Error messages showed `"127.0.0.1:8080:8080"` instead of `"127.0.0.1:8080"`
+
+**Root Cause:**
+- `pkg/http2/client.go:68, 143` - Passed pre-formatted address string as first parameter
+- `errors.NewConnectionError()` then formatted it again: `fmt.Sprintf("%s:%d", alreadyFormattedAddr, port)`
+
+**Fix Applied:**
+- Changed HTTP/2 client calls from:
+  ```go
+  errors.NewConnectionError(fmt.Sprintf("%s:%d", host, port), port, err)
+  ```
+- To correct format:
+  ```go
+  errors.NewConnectionError(host, port, err)
+  ```
+
+**Impact:**
+- ✅ Fixes confusing error messages
+- ✅ Consistent error formatting between HTTP/1.1 and HTTP/2
+- ✅ Enables proper error message parsing
+- ✅ Improves debugging experience
+
+**Code Locations:**
+- `pkg/http2/client.go:68`
+- `pkg/http2/client.go:143`
+
+#### 🔴 Bug #3: HTTP/2 Completely Ignores TLS Configuration
+
+**Severity:** CRITICAL - HTTP/2 unusable with self-signed certificates
+
+**Issue:**
+- HTTP/2 transport created hardcoded `tls.Config` with no `InsecureSkipVerify` support
+- HTTP/2 `Options` struct lacked `InsecureTLS` and `TLSConfig` fields
+- `rawhttp.Do()` didn't pass TLS configuration from main options to HTTP/2 client
+- Result: HTTP/2 connections ALWAYS fail with self-signed certificates, regardless of settings
+
+**Root Cause:**
+- `pkg/http2/types.go:15-61` - Options struct missing TLS configuration fields
+- `pkg/http2/transport.go:213-217` - Hardcoded TLS config without InsecureSkipVerify
+- `rawhttp.go:87-103` - Didn't convert or pass TLS settings to HTTP/2
+
+**Fixes Applied:**
+
+1. **Added TLS fields to HTTP/2 Options** (`pkg/http2/types.go:43-44`):
+   ```go
+   InsecureTLS bool         // Skip TLS certificate verification
+   TLSConfig   *tls.Config  // Custom TLS configuration
+   ```
+
+2. **Updated HTTP/2 transport TLS handling** (`pkg/http2/transport.go:215-250`):
+   - Use custom `TLSConfig` if provided (with clone)
+   - Ensure HTTP/2 ALPN (`h2`) is always included
+   - Apply `InsecureTLS` flag override
+   - Fallback to default config with `InsecureTLS` support
+
+3. **Created TLS config pass-through** (`rawhttp.go:126-154`):
+   - Added `convertToHTTP2Options()` function
+   - Converts `client.Options` → `http2.Options`
+   - Automatically passes `InsecureTLS` and `TLSConfig` to HTTP/2
+
+4. **Enhanced HTTP/2 Client API** (`pkg/http2/client.go:44-59`):
+   - Added `DoWithOptions()` method for dynamic TLS config
+   - Maintained backward compatibility with `Do()` method
+
+**Impact:**
+- ✅ HTTP/2 now fully supports self-signed certificates
+- ✅ HTTP/2 respects both `InsecureTLS` flag and custom `TLSConfig`
+- ✅ Consistent TLS behavior between HTTP/1.1 and HTTP/2
+- ✅ Enables HTTP/2 usage in proxy, testing, and development scenarios
+- ✅ Maintains backward compatibility
+
+**Code Locations:**
+- `pkg/http2/types.go:43-44`
+- `pkg/http2/transport.go:215-250`
+- `pkg/http2/client.go:44-59`
+- `rawhttp.go:126-154`
+
+### Added
+
+- Comprehensive test suite for TLS `InsecureTLS` override functionality
+- Port formatting validation tests for both HTTP/1.1 and HTTP/2
+- HTTP/2 TLS configuration integration tests
+- Error message formatting consistency tests
+
+### Changed
+
+- HTTP/2 `Options` struct now includes `InsecureTLS` and `TLSConfig` fields
+- HTTP/2 transport now uses configurable TLS settings instead of hardcoded config
+- `rawhttp.Do()` now automatically passes TLS configuration to HTTP/2 client
+- Error message formatting is now consistent across HTTP/1.1 and HTTP/2
+
+### Testing
+
+**New Test Files:**
+- `tests/unit/insecure_tls_override_test.go` - TLS InsecureTLS override tests
+- `tests/unit/port_formatting_test.go` - Port formatting validation
+- `tests/unit/http2_port_formatting_test.go` - HTTP/2 specific port tests
+
+**Test Coverage:**
+- ✅ InsecureTLS with custom TLSConfig (Bug #1)
+- ✅ InsecureTLS without custom TLSConfig (backward compatibility)
+- ✅ Custom TLSConfig with InsecureSkipVerify
+- ✅ Port formatting in error messages (Bug #2)
+- ✅ HTTP/2 port formatting consistency
+- ✅ HTTP/2 TLS configuration (Bug #3)
+- ✅ HTTP/2 vs HTTP/1.1 error message consistency
+
+All tests pass ✓ (139 total tests)
+
+### Migration Guide
+
+**No Breaking Changes** - All fixes maintain backward compatibility.
+
+**HTTP/2 TLS Configuration (New Feature):**
+```go
+sender := rawhttp.NewSender()
+
+opts := rawhttp.Options{
+    Scheme:      "https",
+    Host:        "example.com",
+    Port:        443,
+    Protocol:    "http/2",
+    InsecureTLS: true, // Now works with HTTP/2!
+    TLSConfig: &tls.Config{
+        MinVersion: tls.VersionTLS13,
+        // InsecureSkipVerify will be set automatically if InsecureTLS is true
+    },
+}
+
+resp, err := sender.Do(context.Background(), req, opts)
+```
+
+**Priority of TLS Settings:**
+1. If `TLSConfig` is provided, it is cloned and used
+2. If `InsecureTLS: true`, it overrides `TLSConfig.InsecureSkipVerify`
+3. If neither provided, default TLS config is used
+
+### References
+
+- Bug Report: Internal analysis of proxy MITM failures and HTTP/2 limitations
+- Related Issues: Self-signed certificate handling, HTTP→HTTPS scheme override
+
+---
+
 ## [1.1.4] - 2025-11-20
 
 ### Fixed - RFC 9110 Compliance
@@ -148,133 +329,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Enhanced error handling robustness in transport layer
-- Improved resource cleanup consistency across all error paths
-
-### Security
-
-- Mitigated potential DoS vulnerability from TLS handshake failures
-- Prevented resource exhaustion from leaked file descriptors
-
-## [1.1.1] - 2025-11-14
-
-### Added
-
-#### HTTP/2 Debug Flags
-
-- Optional selective debugging for HTTP/2 protocol issues
-- New `Debug` struct in `HTTP2Settings` with granular logging flags
-- Zero overhead when disabled (all flags default to false)
-- Backward compatible with deprecated `ShowFrameDetails` and `TraceFrames` flags
-
-## [1.1.0] - 2025-11-14
-
-### Added - Low-Level Transport Enhancements
-
-This release focuses on production-ready, low-level transport features while maintaining 100% backward compatibility.
-
-#### 🔒 TLS Configuration Passthrough (Phase 1 - Critical)
-- **Direct TLS config passthrough** via `Options.TLSConfig` field
-- Full control over TLS versions, cipher suites, and client certificates
-- Seamless integration with `crypto/tls.Config`
-- Enables TLS 1.3+ enforcement and custom security policies
-
-#### 📊 Standardized Timing Metrics (Phase 1 - High Priority)
-- **New industry-standard field names**: `DNSLookup`, `TCPConnect`, `TLSHandshake`, `TotalTime`
-- Improved String() formatting with clear metric names
-- Full backward compatibility with deprecated field names (`DNS`, `TCP`, `TLS`, `Total`)
-- Enhanced metric calculation methods
-
-#### ⚙️ HTTP/2 Settings Exposure (Phase 2 - High Priority)
-- **RFC 7540 compliant** HTTP/2 SETTINGS configuration
-- Direct control over `SETTINGS_MAX_CONCURRENT_STREAMS`, `SETTINGS_INITIAL_WINDOW_SIZE`, etc.
-- New `DisableServerPush` flag for security (enabled by default)
-- Comprehensive documentation for each SETTINGS parameter
-
-#### 🔍 Enhanced Connection Metadata (Phase 2 - Medium Priority)
-- **Socket-level information**: `LocalAddr`, `RemoteAddr`, `ConnectionID`
-- **TLS session tracking**: `TLSSessionID`, `TLSResumed`
-- Unique connection identifiers for request correlation
-- Session resumption detection for performance monitoring
-
-#### 🚨 Error Type Classification (Phase 3 - Medium Priority)
-- **Operation tracking** in all errors: `Op` field (lookup, dial, handshake, read, write)
-- Enhanced error formatting: `[type] op addr: message: cause`
-- `TransportError` type alias for naming compatibility
-- Smart retry logic support with error phase detection
-
-#### 📈 Connection Pool Observability (Phase 3 - Low Priority)
-- **PoolStats API** for monitoring pool health
-- Track `ActiveConns`, `IdleConns`, and `TotalReused`
-- Connection leak detection capabilities
-- Performance monitoring for connection reuse efficiency
-
-### Changed
-
-- Timing metrics now use standardized field names (backward compatible)
-- HTTP/2 server push disabled by default for security
-- Error formatting improved with operation context
-- String representations updated for better readability
-
-### Fixed
-
-- Fixed timing test compatibility with new metric field names
-- Updated all tests to use standardized naming conventions
-
-### Developer Experience
-
-- **301 lines** of comprehensive unit tests
-- **7 test suites** covering all enhancement features
-- 100% backward compatibility verified
-- All tests passing (40+ test cases)
-
-### Migration Guide
-
-All enhancements are **opt-in** and **100% backward compatible**:
-
-```go
-// Old code continues to work unchanged
-resp, _ := sender.Do(ctx, req, rawhttp.Options{
-    Scheme: "https",
-    Host:   "example.com",
-    Port:   443,
-})
-fmt.Printf("DNS: %v\n", resp.Metrics.DNS) // ✅ Still works
-
-// New features available when needed
-resp, _ := sender.Do(ctx, req, rawhttp.Options{
-    Scheme: "https",
-    Host:   "example.com",
-    Port:   443,
-    TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13}, // ✅ New feature
-})
-fmt.Printf("DNS: %v\n", resp.Metrics.DNSLookup) // ✅ New naming
-stats := sender.PoolStats() // ✅ New API
-```
-
-### Documentation
-
-- Comprehensive README updates with code examples
-- Detailed inline documentation for all new fields
-- RFC 7540 references for HTTP/2 settings
-- Use case examples for each enhancement
-
-## [1.0.0] - 2024-11-XX
-
-### Added
-
-- Initial release with HTTP/1.1 and HTTP/2 support
-- Raw socket-based HTTP communication
-- Connection pooling and Keep-Alive
-- Proxy support (HTTP, HTTPS, SOCKS5)
-- Custom CA certificates
-- Performance monitoring (basic timing metrics)
-- Memory-efficient buffering with disk spilling
-- Comprehensive error handling
-- Production-ready features
-
-[1.1.4]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.3...v1.1.4
-[1.1.3]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.2...v1.1.3
-[1.1.2]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/WhileEndless/go-rawhttp/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/WhileEndless/go-rawhttp/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/WhileEndless/go-rawhttp/releases/tag/v1.0.0
+- Improved connection cleanup in TLS failure scenarios

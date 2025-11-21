@@ -286,6 +286,13 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 	if config.TLSConfig != nil {
 		// Clone the provided config to avoid modifying the original
 		tlsConfig = config.TLSConfig.Clone()
+
+		// IMPORTANT: Also respect InsecureTLS flag as override
+		// This allows users to set InsecureTLS=true even when providing custom TLSConfig
+		// This is critical for proxy scenarios where certificate validation must be disabled
+		if config.InsecureTLS {
+			tlsConfig.InsecureSkipVerify = true
+		}
 	} else {
 		// Create default TLS configuration
 		tlsConfig = &tls.Config{

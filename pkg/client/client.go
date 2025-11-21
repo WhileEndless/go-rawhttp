@@ -41,7 +41,8 @@ type Options struct {
 	// Protocol selection (http/1.1 or http/2)
 	Protocol string
 
-	// HTTP/2 specific options
+	// HTTP/2 specific options (deprecated: this is now a placeholder for backward compatibility)
+	// TLS settings (InsecureTLS, TLSConfig) are now automatically passed to HTTP/2
 	HTTP2Settings *HTTP2Settings
 
 	// Connection pooling and reuse
