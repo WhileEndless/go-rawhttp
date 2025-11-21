@@ -224,6 +224,12 @@ func (t *Transport) validateConfig(config Config) error {
 	if config.Scheme != "http" && config.Scheme != "https" {
 		return errors.NewValidationError("scheme must be http or https")
 	}
+
+	// Validate conflicting options (DEF-1)
+	if config.DisableSNI && config.SNI != "" {
+		return errors.NewValidationError("cannot set both DisableSNI=true and SNI (conflicting options)")
+	}
+
 	return nil
 }
 
@@ -310,10 +316,10 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 		// Add custom CA certificates if provided
 		if len(config.CustomCACerts) > 0 {
 			rootCAs := x509.NewCertPool()
-			for _, caCert := range config.CustomCACerts {
+			for i, caCert := range config.CustomCACerts {
 				if ok := rootCAs.AppendCertsFromPEM(caCert); !ok {
 					return nil, errors.NewTLSError(config.Host, config.Port,
-						errors.NewValidationError("failed to parse CA certificate"))
+						errors.NewValidationError(fmt.Sprintf("failed to parse CA certificate at index %d", i)))
 				}
 			}
 			tlsConfig.RootCAs = rootCAs
@@ -475,6 +481,9 @@ func (t *Transport) CloseConnection(host string, port int, conn net.Conn) {
 }
 
 // isConnectionAlive checks if a connection is still alive
+// Note: This is a best-effort check. It may return false positives (marking
+// good connections as dead) if server sends unexpected data like late frames.
+// This is acceptable as it only causes unnecessary connection recreation.
 func (t *Transport) isConnectionAlive(conn net.Conn) bool {
 	// Set a very short read deadline to check if connection is alive
 	conn.SetReadDeadline(time.Now().Add(1 * time.Millisecond))
@@ -483,20 +492,20 @@ func (t *Transport) isConnectionAlive(conn net.Conn) bool {
 	one := make([]byte, 1)
 	_, err := conn.Read(one)
 
-	// If we get EOF or timeout, connection might be closed or idle (good)
-	// If we get data, we need to handle it (shouldn't happen in HTTP keep-alive)
-	if err == nil {
-		// We read data, connection is alive but has data - this is unexpected
-		// We can't put the byte back, so connection is compromised
-		return false
-	}
-
-	// Check for timeout (expected for idle connection)
+	// Check for timeout first (expected for idle connection)
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 		return true
 	}
 
-	// Any other error means connection is dead
+	// If we read data without error, connection is alive
+	// Note: This shouldn't happen in HTTP/1.1 keep-alive, but it's not necessarily
+	// an error. For HTTP/2, servers might send frames. We conservatively mark as dead
+	// to avoid dealing with buffering the data, but this is safe (just inefficient).
+	if err == nil {
+		return false // Conservative: mark as dead to recreate connection
+	}
+
+	// Any other error (EOF, etc.) means connection is dead
 	return false
 }
 

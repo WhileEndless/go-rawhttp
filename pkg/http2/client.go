@@ -256,10 +256,20 @@ func (c *Client) readResponse(ctx context.Context, conn *Connection, stream *Str
 
 	// Read frames until stream is complete
 	for {
-		// Check context
+		// Check context cancellation
 		select {
 		case <-ctx.Done():
-			return nil, errors.NewTimeoutError("reading response", 30*time.Second)
+			// Return appropriate error based on context error
+			if ctx.Err() == context.DeadlineExceeded {
+				// Calculate elapsed time if deadline was set
+				elapsed := 30 * time.Second // default fallback
+				if deadline, ok := ctx.Deadline(); ok {
+					elapsed = time.Since(deadline.Add(-time.Until(deadline)))
+				}
+				return nil, errors.NewTimeoutError("reading response", elapsed)
+			}
+			// Context was cancelled for other reasons
+			return nil, errors.NewProtocolError("context cancelled", ctx.Err())
 		default:
 		}
 
