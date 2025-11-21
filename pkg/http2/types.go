@@ -41,10 +41,25 @@ type Options struct {
 	ReuseConnection    bool
 
 	// TLS configuration
-	InsecureTLS bool         // Skip TLS certificate verification (for testing/development)
-	TLSConfig   *tls.Config  // Custom TLS configuration (takes precedence when set)
-	SNI         string       // Custom Server Name Indication (SNI) for TLS
-	DisableSNI  bool         // Disable SNI in TLS handshake
+	// InsecureTLS skips TLS certificate verification (for testing/development).
+	// IMPORTANT (DEF-13): This flag ALWAYS overrides TLSConfig.InsecureSkipVerify,
+	// even when custom TLSConfig is provided. This is intentional to support proxy
+	// MITM scenarios where you need custom TLS settings AND disabled verification.
+	// Example: InsecureTLS=true + custom TLSConfig → verification is DISABLED.
+	InsecureTLS bool
+
+	// TLSConfig provides custom TLS configuration for fine-grained control.
+	// When set, this config is cloned and used instead of defaults.
+	// Note: InsecureTLS flag will override InsecureSkipVerify if set to true.
+	TLSConfig *tls.Config
+
+	// SNI specifies custom Server Name Indication for TLS handshake.
+	// Priority: TLSConfig.ServerName > SNI > Host (if DisableSNI is false)
+	SNI string
+
+	// DisableSNI completely disables SNI extension in TLS handshake.
+	// Cannot be used together with SNI option (validation error).
+	DisableSNI bool
 
 	// Priority settings
 	Priority *PriorityParam
