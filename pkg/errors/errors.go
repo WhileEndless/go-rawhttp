@@ -28,6 +28,8 @@ const (
 	ErrorTypeIO ErrorType = "io"
 	// ErrorTypeValidation represents validation errors
 	ErrorTypeValidation ErrorType = "validation"
+	// ErrorTypeProxy represents proxy-specific errors (v2.0.0+)
+	ErrorTypeProxy ErrorType = "proxy"
 )
 
 // Error represents a structured error with context information.
@@ -229,4 +231,71 @@ func IsContextCanceled(err error) bool {
 // IsContextTimeout checks if an error is due to context deadline exceeded.
 func IsContextTimeout(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+// ProxyError represents a proxy-specific error with detailed context.
+// Introduced in v2.0.0 to provide better error reporting for proxy failures.
+//
+// ProxyError includes information about:
+//   - The proxy type (http, https, socks4, socks5)
+//   - The proxy server address
+//   - The operation that failed (connect, auth, handshake, tunnel)
+//   - The underlying error cause
+//
+// Example usage:
+//
+//	if err != nil {
+//	    var proxyErr *ProxyError
+//	    if errors.As(err, &proxyErr) {
+//	        fmt.Printf("Proxy %s at %s failed during %s: %v\n",
+//	            proxyErr.ProxyType, proxyErr.ProxyAddr,
+//	            proxyErr.Operation, proxyErr.Err)
+//	    }
+//	}
+type ProxyError struct {
+	ProxyType string // Proxy protocol: "http", "https", "socks4", "socks5"
+	ProxyAddr string // Proxy server address: "proxy.com:8080"
+	Operation string // Failed operation: "connect", "auth", "handshake", "tunnel"
+	Err       error  // Underlying error
+	Timestamp time.Time
+}
+
+// Error implements the error interface for ProxyError.
+// Format: proxy error (type addr) during operation: cause
+func (e *ProxyError) Error() string {
+	return fmt.Sprintf("proxy error (%s %s) during %s: %v",
+		e.ProxyType, e.ProxyAddr, e.Operation, e.Err)
+}
+
+// Unwrap returns the underlying error for error chain compatibility.
+func (e *ProxyError) Unwrap() error {
+	return e.Err
+}
+
+// NewProxyError creates a new ProxyError with the specified details.
+//
+// Parameters:
+//   - proxyType: The proxy protocol type ("http", "https", "socks4", "socks5")
+//   - proxyAddr: The proxy server address ("proxy.com:8080")
+//   - operation: The operation that failed ("connect", "auth", "handshake", "tunnel")
+//   - err: The underlying error that caused the failure
+//
+// Example:
+//
+//	err := NewProxyError("socks5", "proxy.com:1080", "auth",
+//	    fmt.Errorf("authentication failed"))
+func NewProxyError(proxyType, proxyAddr, operation string, err error) *ProxyError {
+	return &ProxyError{
+		ProxyType: proxyType,
+		ProxyAddr: proxyAddr,
+		Operation: operation,
+		Err:       err,
+		Timestamp: time.Now(),
+	}
+}
+
+// IsProxyError checks if an error is a ProxyError or wraps one.
+func IsProxyError(err error) bool {
+	var proxyErr *ProxyError
+	return errors.As(err, &proxyErr)
 }

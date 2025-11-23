@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "1.2.0"
+const Version = "2.0.0"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {
@@ -49,6 +49,12 @@ type (
 
 	// PoolStats provides connection pool statistics
 	PoolStats = transport.PoolStats
+
+	// ProxyConfig contains upstream proxy configuration (v2.0.0+)
+	ProxyConfig = client.ProxyConfig
+
+	// ProxyError represents a proxy-specific error (v2.0.0+)
+	ProxyError = errors.ProxyError
 )
 
 // Re-export error types for convenience
@@ -60,6 +66,7 @@ const (
 	ErrorTypeProtocol   = errors.ErrorTypeProtocol
 	ErrorTypeIO         = errors.ErrorTypeIO
 	ErrorTypeValidation = errors.ErrorTypeValidation
+	ErrorTypeProxy      = errors.ErrorTypeProxy // v2.0.0+
 )
 
 // Sender implements raw HTTP transport for both HTTP/1.1 and HTTP/2.
@@ -80,6 +87,47 @@ func NewSender() *Sender {
 // Note: HTTP/2 connection pooling uses separate mechanisms.
 func (s *Sender) PoolStats() PoolStats {
 	return s.client.PoolStats()
+}
+
+// ParseProxyURL is a convenience function that parses a proxy URL string
+// into a ProxyConfig struct. This helper simplifies proxy configuration
+// while still allowing access to advanced ProxyConfig features.
+//
+// Supported formats:
+//   - http://host:port
+//   - https://host:port
+//   - socks4://host:port
+//   - socks5://host:port
+//   - With authentication: scheme://user:pass@host:port
+//
+// Default ports: http=8080, https=443, socks4/socks5=1080
+//
+// Example:
+//
+//	opts := rawhttp.Options{
+//	    Scheme: "https",
+//	    Host:   "example.com",
+//	    Port:   443,
+//	    Proxy:  rawhttp.ParseProxyURL("socks5://user:pass@proxy.com:1080"),
+//	}
+//
+// For advanced configuration, use ProxyConfig directly:
+//
+//	opts.Proxy = &rawhttp.ProxyConfig{
+//	    Type:         "http",
+//	    Host:         "proxy.com",
+//	    Port:         8080,
+//	    ConnTimeout:  5 * time.Second,
+//	    ProxyHeaders: map[string]string{"X-Custom": "value"},
+//	}
+func ParseProxyURL(proxyURL string) *ProxyConfig {
+	cfg, err := client.ParseProxyURL(proxyURL)
+	if err != nil {
+		// Return nil on error to maintain backward compatibility
+		// Users can check for nil before using
+		return nil
+	}
+	return cfg
 }
 
 // Do executes the HTTP request using raw sockets.
