@@ -23,6 +23,91 @@ const (
 	maxHeaderBytes = 64 * 1024
 )
 
+// ProxyConfig provides detailed configuration for upstream proxy connections.
+// This struct offers fine-grained control over proxy behavior, including
+// authentication, timeouts, custom headers, and protocol-specific options.
+//
+// Supported proxy types:
+//   - "http": HTTP proxy using CONNECT method (RFC 7231)
+//   - "https": HTTP proxy over TLS connection
+//   - "socks4": SOCKS version 4 proxy (IPv4 only, RFC 1928)
+//   - "socks5": SOCKS version 5 proxy (full-featured, RFC 1928)
+//
+// Basic usage:
+//
+//	proxy := &ProxyConfig{
+//	    Type:     "socks5",
+//	    Host:     "proxy.example.com",
+//	    Port:     1080,
+//	    Username: "user",
+//	    Password: "secret",
+//	}
+//
+// For simple use cases, use ParseProxyURL instead:
+//
+//	proxy := ParseProxyURL("socks5://user:secret@proxy.example.com:1080")
+type ProxyConfig struct {
+	// Type specifies the proxy protocol.
+	// Valid values: "http", "https", "socks4", "socks5"
+	// Required field.
+	Type string `json:"type"`
+
+	// Host is the proxy server hostname or IP address.
+	// Required field.
+	Host string `json:"host"`
+
+	// Port is the proxy server port number.
+	// If zero, defaults are used:
+	//   - http: 8080
+	//   - https: 443
+	//   - socks4/socks5: 1080
+	Port int `json:"port"`
+
+	// Username for proxy authentication (optional).
+	// - HTTP/HTTPS: Used in Proxy-Authorization header (Basic auth)
+	// - SOCKS4: Used as user ID field
+	// - SOCKS5: Used in username/password authentication
+	Username string `json:"username,omitempty"`
+
+	// Password for proxy authentication (optional).
+	// Only used for HTTP/HTTPS and SOCKS5 proxies.
+	// Ignored for SOCKS4 (which only has username/user ID).
+	Password string `json:"password,omitempty"`
+
+	// ConnTimeout specifies the timeout for connecting to the proxy server.
+	// If zero, Options.ConnTimeout is used.
+	// This is separate from the timeout for connecting to the target server.
+	ConnTimeout time.Duration `json:"conn_timeout,omitempty"`
+
+	// ProxyHeaders specifies custom headers to include in the HTTP CONNECT request.
+	// Only applies to "http" and "https" proxy types.
+	// Ignored for SOCKS proxies.
+	//
+	// Example:
+	//   ProxyHeaders: map[string]string{
+	//       "X-Custom-Header": "value",
+	//       "Proxy-Connection": "keep-alive",
+	//   }
+	ProxyHeaders map[string]string `json:"proxy_headers,omitempty"`
+
+	// TLSConfig specifies custom TLS configuration for the proxy connection.
+	// Only applies when Type="https" (connecting TO the proxy over TLS).
+	// This is separate from Options.TLSConfig, which configures TLS to the target server.
+	//
+	// Use case: Proxy server uses self-signed certificate
+	//   TLSConfig: &tls.Config{InsecureSkipVerify: true}
+	TLSConfig *tls.Config `json:"-"`
+
+	// ResolveDNSViaProxy controls DNS resolution for SOCKS5 proxies.
+	// - true (default): Target hostname is sent to SOCKS5 proxy, which resolves DNS
+	// - false: DNS is resolved locally before connecting to SOCKS5 proxy
+	//
+	// Only applies to Type="socks5". Ignored for other proxy types.
+	// HTTP proxies always resolve DNS locally (CONNECT uses hostname).
+	// SOCKS4 always resolves DNS locally (requires IPv4 address).
+	ResolveDNSViaProxy bool `json:"resolve_dns_via_proxy,omitempty"`
+}
+
 // Options controls how the Client establishes connections and reads responses.
 type Options struct {
 	Scheme    string
@@ -65,8 +150,22 @@ type Options struct {
 	// Connection pooling and reuse
 	ReuseConnection bool // Enable Keep-Alive and connection pooling
 
-	// Upstream proxy support
-	ProxyURL string // Upstream proxy URL (e.g., "http://proxy:8080" or "socks5://proxy:1080")
+	// Upstream proxy configuration (v2.0.0+)
+	// Use ParseProxyURL for simple cases or create ProxyConfig for advanced control.
+	//
+	// Simple usage:
+	//   Proxy: ParseProxyURL("socks5://user:pass@proxy.com:1080")
+	//
+	// Advanced usage:
+	//   Proxy: &ProxyConfig{
+	//       Type: "socks5",
+	//       Host: "proxy.com",
+	//       Port: 1080,
+	//       Username: "user",
+	//       Password: "pass",
+	//       ConnTimeout: 10 * time.Second,
+	//   }
+	Proxy *ProxyConfig
 
 	// Custom TLS configuration
 	CustomCACerts [][]byte // Custom root CA certificates in PEM format
@@ -139,6 +238,11 @@ type Response struct {
 	// Enhanced TLS metadata - Session information
 	TLSSessionID string // TLS session ID (hex-encoded)
 	TLSResumed   bool   // Whether TLS session was resumed
+
+	// Proxy metadata (v2.0.0+)
+	ProxyUsed bool   // Whether the request was routed through an upstream proxy
+	ProxyType string // Proxy protocol type: "http", "https", "socks4", "socks5" (only if ProxyUsed=true)
+	ProxyAddr string // Proxy server address "host:port" (only if ProxyUsed=true)
 }
 
 // HTTP2Settings contains HTTP/2 specific configuration.
@@ -213,6 +317,26 @@ func (c *Client) PoolStats() transport.PoolStats {
 	return c.transport.PoolStats()
 }
 
+// convertProxyConfig converts client.ProxyConfig to transport.ProxyConfig.
+// Returns nil if input is nil.
+func convertProxyConfig(clientProxy *ProxyConfig) *transport.ProxyConfig {
+	if clientProxy == nil {
+		return nil
+	}
+
+	return &transport.ProxyConfig{
+		Type:               clientProxy.Type,
+		Host:               clientProxy.Host,
+		Port:               clientProxy.Port,
+		Username:           clientProxy.Username,
+		Password:           clientProxy.Password,
+		ConnTimeout:        clientProxy.ConnTimeout,
+		ProxyHeaders:       clientProxy.ProxyHeaders,
+		TLSConfig:          clientProxy.TLSConfig,
+		ResolveDNSViaProxy: clientProxy.ResolveDNSViaProxy,
+	}
+}
+
 // parseMethod extracts the HTTP method from a raw request.
 func parseMethod(req []byte) string {
 	// Find first space - method is everything before it
@@ -250,7 +374,7 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		ReadTimeout:     opts.ReadTimeout,
 		WriteTimeout:    opts.WriteTimeout,
 		ReuseConnection: opts.ReuseConnection,
-		ProxyURL:        opts.ProxyURL,
+		Proxy:           convertProxyConfig(opts.Proxy), // Convert client.ProxyConfig to transport.ProxyConfig
 		CustomCACerts:   opts.CustomCACerts,
 		ClientCertPEM:   opts.ClientCertPEM,
 		ClientKeyPEM:    opts.ClientKeyPEM,
@@ -312,6 +436,10 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		// Set enhanced TLS metadata
 		TLSSessionID: connMetadata.TLSSessionID,
 		TLSResumed:   connMetadata.TLSResumed,
+		// Set proxy metadata (v2.0.0+)
+		ProxyUsed: connMetadata.ProxyUsed,
+		ProxyType: connMetadata.ProxyType,
+		ProxyAddr: connMetadata.ProxyAddr,
 	}
 
 	// Send request
