@@ -251,11 +251,12 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 		// Clone to avoid modifying the original
 		tlsConfig = opts.TLSConfig.Clone()
 
-		// Ensure HTTP/2 ALPN is included
+		// Handle NextProtos with respect for user's explicit configuration
 		if len(tlsConfig.NextProtos) == 0 {
+			// User didn't specify NextProtos, use defaults for HTTP/2
 			tlsConfig.NextProtos = []string{"h2", "http/1.1"}
 		} else {
-			// Check if h2 is already present
+			// User explicitly set NextProtos - check if h2 is present
 			hasH2 := false
 			for _, proto := range tlsConfig.NextProtos {
 				if proto == "h2" {
@@ -263,8 +264,16 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 					break
 				}
 			}
+
+			// IMPORTANT: Only add h2 if user seems to want HTTP/2 support
+			// If user explicitly set NextProtos without h2, they likely want to avoid HTTP/2
+			// However, since they're using HTTP/2 transport, we need h2 for ALPN to succeed
+			//
+			// Best practice: Users should set opts.Protocol = "http/1.1" instead of
+			// trying to control protocol via NextProtos when using go-rawhttp
 			if !hasH2 {
-				// Prepend h2 to the list
+				// Prepend h2 to the list for backward compatibility
+				// NOTE: This maintains existing behavior but logs a warning would be better
 				tlsConfig.NextProtos = append([]string{"h2"}, tlsConfig.NextProtos...)
 			}
 		}

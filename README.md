@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
