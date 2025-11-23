@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -25,7 +25,7 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 ✅ **Memory Efficient** - No memory leaks, automatic cleanup, disk spilling for large responses
 ✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts
 ✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse and observability
-✅ **Proxy Support** - HTTP, HTTPS, and SOCKS5 upstream proxy support with authentication
+✅ **Proxy Support** - HTTP, HTTPS, SOCKS4, and SOCKS5 upstream proxy support with authentication and advanced features
 ✅ **Custom TLS** - Direct TLS config passthrough for full control (TLS versions, cipher suites, mTLS client certificates)
 ✅ **Connection Metadata** - Detailed socket-level and TLS session info (addresses, session IDs, resumption)
 ✅ **Error Recovery** - Structured error classification with operation tracking for smart retry logic
@@ -83,6 +83,121 @@ func main() {
 ```
 
 ## Recent Enhancements
+
+### v2.0.0 (2025-11-23)
+
+🚀 **MAJOR RELEASE** - Comprehensive proxy redesign with advanced features
+
+This major release introduces a complete redesign of the proxy configuration API for better clarity, extensibility, and advanced features. **This release contains breaking changes** - see [MIGRATION_V2.md](docs/MIGRATION_V2.md) for migration guide.
+
+#### ⚠️ Breaking Changes
+
+**Removed: `ProxyURL` field**
+```go
+// ❌ v1.x - NO LONGER WORKS
+opts := rawhttp.Options{
+    ProxyURL: "http://proxy:8080",
+}
+
+// ✅ v2.0.0 - New API
+opts := rawhttp.Options{
+    Proxy: rawhttp.ParseProxyURL("http://proxy:8080"),
+}
+```
+
+The simple `ProxyURL` string field has been replaced with a structured `ProxyConfig` for better flexibility and advanced features.
+
+#### New Features
+
+**1. ParseProxyURL() Helper Function**
+- Simple URL-based proxy configuration (replaces ProxyURL)
+- Supports all proxy types: http, https, socks4, socks5
+- Auto-applies default ports (http=8080, https=443, socks=1080)
+- Parses authentication from URL
+
+```go
+// Simple usage - just as easy as ProxyURL!
+opts.Proxy = rawhttp.ParseProxyURL("socks5://user:pass@proxy.com:1080")
+```
+
+**2. SOCKS4 Protocol Support**
+- Added SOCKS4 proxy protocol implementation
+- IPv4-only with user ID authentication
+- Useful for legacy systems
+
+**3. Advanced ProxyConfig Struct**
+- Custom headers for HTTP/HTTPS proxies
+- Proxy-specific connection timeout
+- Custom TLS configuration for HTTPS proxies
+- DNS resolution control for SOCKS proxies
+
+```go
+opts.Proxy = &rawhttp.ProxyConfig{
+    Type:        "http",
+    Host:        "proxy.com",
+    Port:        8080,
+    ConnTimeout: 5 * time.Second,        // NEW
+    ProxyHeaders: map[string]string{     // NEW
+        "X-Custom-Header": "value",
+    },
+}
+```
+
+**4. Proxy Metadata in Response**
+- `ProxyUsed` - Whether proxy was used
+- `ProxyType` - Proxy type (http/https/socks4/socks5)
+- `ProxyAddr` - Proxy address (host:port)
+
+**5. ProxyError Type**
+- Structured error handling for proxy failures
+- Includes proxy type, address, and operation context
+
+```go
+if proxyErr, ok := err.(*rawhttp.ProxyError); ok {
+    fmt.Printf("Proxy %s at %s failed: %v\n",
+        proxyErr.ProxyType, proxyErr.ProxyAddr, proxyErr.Err)
+}
+```
+
+#### Migration from v1.2.0
+
+**Step 1**: Find all uses of `ProxyURL`:
+```bash
+grep -r "ProxyURL" . --include="*.go"
+```
+
+**Step 2**: Replace with `Proxy` and `ParseProxyURL()`:
+```go
+// Before (v1.x)
+opts.ProxyURL = "socks5://user:pass@proxy.com:1080"
+
+// After (v2.0.0)
+opts.Proxy = rawhttp.ParseProxyURL("socks5://user:pass@proxy.com:1080")
+```
+
+**Step 3**: Test your changes:
+```bash
+go test ./...
+```
+
+**No functionality is lost** - all v1.x proxy features work in v2.0.0, with many enhancements.
+
+#### Why Breaking Change?
+
+The old `ProxyURL` field had fundamental limitations:
+- ❌ No support for advanced features (custom headers, timeouts, TLS config)
+- ❌ Two different ways to configure proxy would be confusing
+- ❌ Making this change later (after wider adoption) would be more painful
+
+We made this breaking change early while the library is still growing to provide the best long-term API.
+
+#### See Also
+- **Migration Guide**: [docs/MIGRATION_V2.md](docs/MIGRATION_V2.md)
+- **Complete Examples**: [examples/proxy_comprehensive.go](examples/proxy_comprehensive.go)
+- **Test Coverage**: All tests passing (including new proxy parser tests)
+- **Changelog**: See CHANGELOG.md for detailed changes
+
+---
 
 ### v1.2.0 (2025-11-21)
 
@@ -549,8 +664,8 @@ type Options struct {
     // Connection pooling and reuse
     ReuseConnection bool        // Enable Keep-Alive and connection pooling
 
-    // Upstream proxy support
-    ProxyURL     string        // Upstream proxy URL (e.g., "http://proxy:8080" or "socks5://user:pass@proxy:1080")
+    // Upstream proxy support (v2.0.0+)
+    Proxy *ProxyConfig          // Upstream proxy configuration (replaces ProxyURL in v2.0.0)
 
     // Custom TLS configuration
     CustomCACerts  [][]byte     // Custom root CA certificates in PEM format
@@ -595,6 +710,18 @@ type HTTP2Settings struct {
     // Deprecated: Use Debug.LogFrames instead
     ShowFrameDetails     bool   // Log detailed frame information (deprecated)
     TraceFrames          bool   // Trace all HTTP/2 frames (deprecated)
+}
+
+type ProxyConfig struct {
+    Type               string            // Proxy type: "http", "https", "socks4", "socks5"
+    Host               string            // Proxy hostname
+    Port               int               // Proxy port
+    Username           string            // Optional: proxy authentication username
+    Password           string            // Optional: proxy authentication password
+    ConnTimeout        time.Duration     // Optional: proxy connection timeout (uses ConnTimeout if not set)
+    ProxyHeaders       map[string]string // Optional: custom headers for HTTP/HTTPS proxies
+    TLSConfig          *tls.Config       // Optional: custom TLS config for HTTPS proxies
+    ResolveDNSViaProxy bool              // Optional: resolve DNS via SOCKS proxy (default: true for SOCKS5)
 }
 ```
 
@@ -894,42 +1021,126 @@ for i := 0; i < 10; i++ {
 }
 ```
 
-### Upstream Proxy Support
+### Upstream Proxy Support (v2.0.0+)
+
+⚠️ **BREAKING CHANGE**: `ProxyURL` field has been removed in v2.0.0. Use `Proxy` with `ParseProxyURL()` helper.
+
+See [MIGRATION_V2.md](docs/MIGRATION_V2.md) for full migration guide.
+
+#### Simple Proxy Usage (ParseProxyURL)
 ```go
-// HTTP proxy
+import "github.com/WhileEndless/go-rawhttp"
+
+// HTTP proxy - simple and convenient!
 opts := rawhttp.Options{
-    Scheme:   "https",
-    Host:     "target.example.com",
-    Port:     443,
-    ProxyURL: "http://proxy.example.com:8080", // HTTP proxy
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy:  rawhttp.ParseProxyURL("http://127.0.0.1:8080"),
 }
 
 // HTTP proxy with authentication
 opts := rawhttp.Options{
-    Scheme:   "https",
-    Host:     "target.example.com",
-    Port:     443,
-    ProxyURL: "http://user:password@proxy.example.com:8080",
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy:  rawhttp.ParseProxyURL("http://user:pass@proxy.example.com:8080"),
 }
 
-// HTTPS proxy
+// HTTPS proxy (TLS to proxy)
 opts := rawhttp.Options{
-    Scheme:   "https",
-    Host:     "target.example.com",
-    Port:     443,
-    ProxyURL: "https://secure-proxy.example.com:8443",
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy:  rawhttp.ParseProxyURL("https://secure-proxy.example.com:8443"),
 }
 
-// SOCKS5 proxy
+// SOCKS5 proxy (DNS via proxy by default)
 opts := rawhttp.Options{
-    Scheme:   "https",
-    Host:     "target.example.com",
-    Port:     443,
-    ProxyURL: "socks5://user:password@socks-proxy.example.com:1080",
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy:  rawhttp.ParseProxyURL("socks5://user:pass@proxy.example.com:1080"),
+}
+
+// SOCKS4 proxy (legacy support, IPv4 only)
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy:  rawhttp.ParseProxyURL("socks4://user@proxy.example.com:1080"),
 }
 
 resp, err := sender.Do(ctx, request, opts)
 ```
+
+#### Advanced Proxy Configuration
+```go
+// Custom headers for HTTP/HTTPS proxies
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy: &rawhttp.ProxyConfig{
+        Type:     "http",
+        Host:     "corporate-proxy.example.com",
+        Port:     8080,
+        Username: "employee",
+        Password: "secret",
+
+        // NEW: Advanced features in v2.0.0
+        ConnTimeout: 5 * time.Second,           // Proxy-specific timeout
+        ProxyHeaders: map[string]string{        // Custom headers
+            "X-Employee-ID": "12345",
+            "X-Department":  "Engineering",
+        },
+    },
+}
+
+// HTTPS proxy with custom TLS configuration
+opts := rawhttp.Options{
+    Scheme: "https",
+    Host:   "api.example.com",
+    Port:   443,
+    Proxy: &rawhttp.ProxyConfig{
+        Type:     "https",
+        Host:     "secure-proxy.example.com",
+        Port:     8443,
+        Username: "user",
+        Password: "pass",
+
+        // Custom TLS for connecting TO the proxy
+        TLSConfig: &tls.Config{
+            InsecureSkipVerify: true, // Accept self-signed proxy cert
+            MinVersion:         tls.VersionTLS12,
+        },
+    },
+}
+
+// Check proxy metadata in response
+resp, err := sender.Do(ctx, request, opts)
+if resp != nil {
+    fmt.Printf("Proxy Used: %v\n", resp.ProxyUsed)
+    fmt.Printf("Proxy Type: %s\n", resp.ProxyType)
+    fmt.Printf("Proxy Addr: %s\n", resp.ProxyAddr)
+}
+
+// Handle proxy errors
+if err != nil {
+    if proxyErr, ok := err.(*rawhttp.ProxyError); ok {
+        fmt.Printf("Proxy %s at %s failed: %v\n",
+            proxyErr.ProxyType, proxyErr.ProxyAddr, proxyErr.Err)
+    }
+}
+```
+
+**Common Question**: Can HTTP proxy handle HTTPS targets?
+
+**YES!** `http://` proxy can proxy HTTPS requests. The proxy type (http/https) determines how you connect TO the proxy. The target scheme (http/https) determines traffic THROUGH the proxy.
+
+Example: `Proxy: ParseProxyURL("http://proxy:8080")` with `Scheme: "https"` works perfectly - cleartext connection to proxy, encrypted connection to target.
+
+**See also**: `examples/proxy_comprehensive.go` for complete examples
 
 ### Custom CA Certificates
 ```go
@@ -1229,6 +1440,7 @@ resp, err := sender.Do(ctx, request, opts)
 
 See the `examples/` directory for complete working examples:
 
+- **`proxy_comprehensive.go`** - Comprehensive proxy examples for v2.0.0 (HTTP, HTTPS, SOCKS4, SOCKS5)
 - **`tls_custom_config.go`** - TLS configuration with InsecureTLS and custom TLSConfig
 - **`sni_configuration.go`** - SNI configuration examples (custom SNI, disable SNI, priority order)
 - **`proxy_mitm.go`** - Proxy MITM scenarios showcasing v1.1.5 bug fixes
@@ -1239,6 +1451,7 @@ See the `examples/` directory for complete working examples:
 
 Run examples:
 ```bash
+go run examples/proxy_comprehensive.go
 go run examples/tls_custom_config.go
 go run examples/sni_configuration.go
 go run examples/proxy_mitm.go
