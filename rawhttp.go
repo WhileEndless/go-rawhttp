@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "2.0.0"
+const Version = "2.0.1"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {
@@ -162,9 +162,31 @@ func (s *Sender) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 
 // detectProtocol determines whether to use HTTP/1.1 or HTTP/2
 func (s *Sender) detectProtocol(req []byte, opts Options) string {
-	// Check options first
+	// Check options first - highest priority
 	if opts.Protocol != "" {
 		return strings.ToLower(opts.Protocol)
+	}
+
+	// If proxy is configured and protocol not specified, prefer HTTP/1.1
+	// because HTTP/2 transport doesn't support proxies yet
+	if opts.Proxy != nil {
+		return "http/1.1"
+	}
+
+	// If TLSConfig.NextProtos is explicitly set without "h2", prefer HTTP/1.1
+	// This respects user's intention to avoid HTTP/2
+	if opts.TLSConfig != nil && len(opts.TLSConfig.NextProtos) > 0 {
+		hasH2 := false
+		for _, proto := range opts.TLSConfig.NextProtos {
+			if proto == "h2" {
+				hasH2 = true
+				break
+			}
+		}
+		if !hasH2 {
+			// User explicitly excluded h2 from ALPN, use HTTP/1.1
+			return "http/1.1"
+		}
 	}
 
 	// Check request line for HTTP/2 indicator

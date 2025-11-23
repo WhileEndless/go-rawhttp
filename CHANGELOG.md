@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2025-11-23
+
+### 🔧 Fixed
+
+**Protocol Negotiation with Proxy**
+
+- Improved protocol detection when using upstream proxies
+- When proxy is configured without explicit Protocol setting, HTTP/1.1 is now preferred (since HTTP/2 transport doesn't support proxies)
+- When TLSConfig.NextProtos is set without "h2", HTTP/1.1 is automatically selected
+- This resolves issues where users expected HTTP/1.1 but HTTP/2 was being attempted
+
+**Changes:**
+- Enhanced `detectProtocol()` in rawhttp.go to respect proxy configuration
+- Added automatic HTTP/1.1 selection when proxy is used without Protocol field
+- Added automatic HTTP/1.1 selection when NextProtos excludes "h2"
+- Improved documentation in HTTP/2 transport about ALPN behavior
+
+**Impact:**
+- No breaking changes
+- Better automatic protocol selection for proxy scenarios
+- Explicit Protocol setting still takes highest priority
+
+**Test Coverage:**
+- Added comprehensive protocol detection tests with proxy scenarios
+- All existing tests pass without modification
+
 ## [2.0.0] - 2025-11-23
 
 ### 🔴 BREAKING CHANGES
