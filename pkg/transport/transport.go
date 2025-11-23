@@ -9,8 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,8 +20,22 @@ import (
 
 	"github.com/WhileEndless/go-rawhttp/pkg/errors"
 	"github.com/WhileEndless/go-rawhttp/pkg/timing"
-	"golang.org/x/net/proxy"
+	netproxy "golang.org/x/net/proxy"
 )
+
+// ProxyConfig provides detailed configuration for upstream proxy connections.
+// This is a transport-layer copy of client.ProxyConfig to avoid circular dependencies.
+type ProxyConfig struct {
+	Type               string
+	Host               string
+	Port               int
+	Username           string
+	Password           string
+	ConnTimeout        time.Duration
+	ProxyHeaders       map[string]string
+	TLSConfig          *tls.Config
+	ResolveDNSViaProxy bool
+}
 
 // Config holds transport configuration.
 type Config struct {
@@ -55,8 +69,10 @@ type Config struct {
 	// Connection pooling
 	ReuseConnection bool
 
-	// Proxy configuration
-	ProxyURL string
+	// Proxy configuration (v2.0.0+)
+	// Holds the proxy configuration for upstream proxy support.
+	// This is passed from client.Options.Proxy
+	Proxy *ProxyConfig
 
 	// Custom CA certificates (PEM format)
 	CustomCACerts [][]byte
@@ -100,6 +116,11 @@ type ConnectionMetadata struct {
 	// Enhanced TLS metadata
 	TLSSessionID string // TLS session ID (hex-encoded)
 	TLSResumed   bool   // Whether TLS session was resumed
+
+	// Proxy metadata (v2.0.0+)
+	ProxyUsed bool   // Whether request went through proxy
+	ProxyType string // Proxy type: "http", "https", "socks4", "socks5"
+	ProxyAddr string // Proxy address: "proxy.com:8080"
 }
 
 // pooledConnection wraps a connection with metadata
@@ -198,10 +219,10 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 	var conn net.Conn
 
 	// Connect through proxy if configured
-	if config.ProxyURL != "" {
-		conn, err = t.connectViaProxy(ctx, config, dialAddr, connTimeout, timer)
+	if config.Proxy != nil {
+		conn, metadata, err = t.connectViaProxy(ctx, config, dialAddr, connTimeout, timer, metadata)
 		if err != nil {
-			return nil, nil, errors.NewConnectionError(config.Host, config.Port, err)
+			return nil, nil, err // Error already wrapped by connectViaProxy
 		}
 	} else {
 		// Direct TCP connection
@@ -622,69 +643,143 @@ func (t *Transport) cleanupIdleConnections() {
 	}
 }
 
-// connectViaProxy connects to the target through an upstream proxy
-func (t *Transport) connectViaProxy(ctx context.Context, config Config, targetAddr string, timeout time.Duration, timer *timing.Timer) (net.Conn, error) {
-	proxyURL, err := url.Parse(config.ProxyURL)
-	if err != nil {
-		return nil, errors.NewValidationError(fmt.Sprintf("invalid proxy URL: %v", err))
+// connectViaProxy connects to the target through an upstream proxy.
+// Returns connection and updates metadata with proxy information.
+func (t *Transport) connectViaProxy(ctx context.Context, config Config, targetAddr string, timeout time.Duration, timer *timing.Timer, metadata *ConnectionMetadata) (net.Conn, *ConnectionMetadata, error) {
+	proxy := config.Proxy
+	if proxy == nil {
+		return nil, nil, errors.NewValidationError("proxy configuration is nil")
 	}
+
+	// Validate proxy config
+	if proxy.Type == "" {
+		return nil, nil, errors.NewValidationError("proxy type cannot be empty")
+	}
+	if proxy.Host == "" {
+		return nil, nil, errors.NewValidationError("proxy host cannot be empty")
+	}
+
+	// Apply default ports if not specified
+	proxyPort := proxy.Port
+	if proxyPort == 0 {
+		switch proxy.Type {
+		case "http":
+			proxyPort = 8080
+		case "https":
+			proxyPort = 443
+		case "socks4", "socks5":
+			proxyPort = 1080
+		default:
+			return nil, nil, errors.NewValidationError(fmt.Sprintf("unsupported proxy type: %s", proxy.Type))
+		}
+	}
+
+	// Use proxy-specific timeout if configured
+	proxyTimeout := proxy.ConnTimeout
+	if proxyTimeout <= 0 {
+		proxyTimeout = timeout
+	}
+
+	// Update metadata
+	proxyAddr := fmt.Sprintf("%s:%d", proxy.Host, proxyPort)
+	metadata.ProxyUsed = true
+	metadata.ProxyType = proxy.Type
+	metadata.ProxyAddr = proxyAddr
 
 	timer.StartTCP()
 	defer timer.EndTCP()
 
-	switch proxyURL.Scheme {
+	var conn net.Conn
+	var err error
+
+	// Route to appropriate proxy handler
+	switch proxy.Type {
 	case "http", "https":
-		return t.connectViaHTTPProxy(ctx, proxyURL, config, targetAddr, timeout)
+		conn, err = t.connectViaHTTPProxy(ctx, proxy, proxyAddr, config, targetAddr, proxyTimeout)
+	case "socks4":
+		conn, err = t.connectViaSOCKS4Proxy(ctx, proxy, proxyAddr, targetAddr, proxyTimeout)
 	case "socks5":
-		return t.connectViaSOCKS5Proxy(ctx, proxyURL, targetAddr, timeout)
+		conn, err = t.connectViaSOCKS5Proxy(ctx, proxy, proxyAddr, targetAddr, proxyTimeout)
 	default:
-		return nil, errors.NewValidationError(fmt.Sprintf("unsupported proxy scheme: %s", proxyURL.Scheme))
+		return nil, nil, errors.NewValidationError(fmt.Sprintf("unsupported proxy type: %s", proxy.Type))
 	}
+
+	if err != nil {
+		// Wrap error as ProxyError
+		return nil, nil, errors.NewProxyError(proxy.Type, proxyAddr, "connect", err)
+	}
+
+	return conn, metadata, nil
 }
 
-// connectViaHTTPProxy connects through an HTTP CONNECT proxy
-func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxyURL *url.URL, config Config, targetAddr string, timeout time.Duration) (net.Conn, error) {
-	// Connect to proxy
+// connectViaHTTPProxy connects through an HTTP/HTTPS CONNECT proxy with custom headers support.
+//
+// HTTP CONNECT Protocol Flow:
+//  1. Connect to proxy server (TCP or TLS if HTTPS proxy)
+//  2. Send CONNECT request: "CONNECT target.host:port HTTP/1.1"
+//  3. Receive response: "HTTP/1.1 200 Connection Established"
+//  4. Connection tunneled - can now send target traffic (HTTP or HTTPS)
+//
+// Note: The proxy type (http vs https) determines how we connect TO the proxy.
+// The target scheme (http vs https) determines traffic THROUGH the tunnel.
+// Example: http://proxy:8080 can proxy HTTPS requests - the tunnel is cleartext
+// but the target traffic inside is TLS-encrypted.
+func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxy *ProxyConfig, proxyAddr string, config Config, targetAddr string, timeout time.Duration) (net.Conn, error) {
+	// Connect to proxy server
 	dialer := &net.Dialer{Timeout: timeout}
-	proxyAddr := proxyURL.Host
-	if !strings.Contains(proxyAddr, ":") {
-		if proxyURL.Scheme == "https" {
-			proxyAddr = net.JoinHostPort(proxyAddr, "443")
-		} else {
-			proxyAddr = net.JoinHostPort(proxyAddr, "8080")
-		}
-	}
-
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to proxy: %w", err)
 	}
 
-	// If proxy is HTTPS, upgrade connection to TLS
-	if proxyURL.Scheme == "https" {
-		tlsConfig := &tls.Config{
-			ServerName:         proxyURL.Hostname(),
-			InsecureSkipVerify: config.InsecureTLS,
+	// If proxy type is HTTPS, upgrade connection to TLS
+	if proxy.Type == "https" {
+		tlsConfig := proxy.TLSConfig
+		if tlsConfig == nil {
+			// Default TLS config for HTTPS proxy
+			tlsConfig = &tls.Config{
+				ServerName:         proxy.Host,
+				InsecureSkipVerify: config.InsecureTLS,
+			}
+		} else {
+			// Use custom TLS config but respect InsecureTLS override
+			tlsConfig = tlsConfig.Clone()
+			if config.InsecureTLS {
+				tlsConfig.InsecureSkipVerify = true
+			}
+			if tlsConfig.ServerName == "" {
+				tlsConfig.ServerName = proxy.Host
+			}
 		}
-		conn = tls.Client(conn, tlsConfig)
+
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.Handshake(); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("TLS handshake to proxy failed: %w", err)
+		}
+		conn = tlsConn
 	}
 
-	// Send CONNECT request
+	// Build CONNECT request
 	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, config.Host)
 
+	// Add custom headers if provided
+	for key, value := range proxy.ProxyHeaders {
+		connectReq += fmt.Sprintf("%s: %s\r\n", key, value)
+	}
+
 	// Add proxy authentication if credentials provided
-	if proxyURL.User != nil {
-		username := proxyURL.User.Username()
-		password, _ := proxyURL.User.Password()
-		auth := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	if proxy.Username != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(proxy.Username + ":" + proxy.Password))
 		connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", auth)
 	}
 
 	connectReq += "\r\n"
 
+	// Send CONNECT request
 	if _, err := conn.Write([]byte(connectReq)); err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to send CONNECT request: %w", err)
 	}
 
 	// Read CONNECT response
@@ -692,14 +787,13 @@ func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxyURL *url.URL, 
 	statusLine, err := reader.ReadString('\n')
 	if err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
 	}
 
 	// Check if CONNECT succeeded (HTTP/1.x 200)
 	if !strings.Contains(statusLine, " 200") {
 		conn.Close()
-		return nil, errors.NewConnectionError(config.Host, config.Port,
-			fmt.Errorf("proxy CONNECT failed: %s", strings.TrimSpace(statusLine)))
+		return nil, fmt.Errorf("proxy CONNECT failed: %s", strings.TrimSpace(statusLine))
 	}
 
 	// Read and discard remaining headers until empty line
@@ -707,7 +801,7 @@ func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxyURL *url.URL, 
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			conn.Close()
-			return nil, err
+			return nil, fmt.Errorf("failed to read CONNECT response headers: %w", err)
 		}
 		if line == "\r\n" || line == "\n" {
 			break
@@ -717,31 +811,139 @@ func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxyURL *url.URL, 
 	return conn, nil
 }
 
-// connectViaSOCKS5Proxy connects through a SOCKS5 proxy
-func (t *Transport) connectViaSOCKS5Proxy(ctx context.Context, proxyURL *url.URL, targetAddr string, timeout time.Duration) (net.Conn, error) {
-	// Parse proxy address
-	proxyAddr := proxyURL.Host
-	if !strings.Contains(proxyAddr, ":") {
-		proxyAddr = net.JoinHostPort(proxyAddr, "1080")
+// connectViaSOCKS4Proxy connects through a SOCKS4 proxy.
+//
+// SOCKS4 Protocol (RFC 1928):
+//   - IPv4 only (no IPv6 support)
+//   - Simple authentication via user ID
+//   - DNS resolution must be done locally
+//
+// Request format: [VER(1)][CMD(1)][PORT(2)][IP(4)][USERID][NULL]
+// Response format: [VER(1)][STATUS(1)][PORT(2)][IP(4)]
+//
+// Status codes:
+//   - 0x5A: Request granted
+//   - 0x5B: Request rejected or failed
+//   - 0x5C: Request failed (identd not running)
+//   - 0x5D: Request failed (identd auth failed)
+func (t *Transport) connectViaSOCKS4Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr string, targetAddr string, timeout time.Duration) (net.Conn, error) {
+	// Parse target address
+	host, portStr, err := net.SplitHostPort(targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target address: %w", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port: %w", err)
 	}
 
-	// Create SOCKS5 dialer
-	var auth *proxy.Auth
-	if proxyURL.User != nil {
-		username := proxyURL.User.Username()
-		password, _ := proxyURL.User.Password()
-		auth = &proxy.Auth{
-			User:     username,
-			Password: password,
+	// SOCKS4 requires IPv4 address - resolve hostname
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+	}
+
+	var targetIP net.IP
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			targetIP = ip4
+			break
+		}
+	}
+	if targetIP == nil {
+		return nil, fmt.Errorf("no IPv4 address found for %s (SOCKS4 requires IPv4)", host)
+	}
+
+	// Connect to SOCKS4 proxy
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SOCKS4 proxy: %w", err)
+	}
+
+	// Build SOCKS4 request
+	// Format: [VER(0x04)][CMD(0x01=CONNECT)][PORT(2 bytes)][IP(4 bytes)][USERID][NULL]
+	req := []byte{
+		0x04, // VER: SOCKS version 4
+		0x01, // CMD: CONNECT command
+		byte(port >> 8),   // PORT high byte
+		byte(port & 0xFF), // PORT low byte
+	}
+	req = append(req, targetIP...) // IP address (4 bytes)
+
+	// Add user ID if provided
+	if proxy.Username != "" {
+		req = append(req, []byte(proxy.Username)...)
+	}
+	req = append(req, 0x00) // NULL terminator
+
+	// Send SOCKS4 request
+	if _, err := conn.Write(req); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send SOCKS4 request: %w", err)
+	}
+
+	// Read SOCKS4 response (8 bytes)
+	resp := make([]byte, 8)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read SOCKS4 response: %w", err)
+	}
+
+	// Check response status
+	status := resp[1]
+	switch status {
+	case 0x5A:
+		// Request granted - success!
+		return conn, nil
+	case 0x5B:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request rejected or failed")
+	case 0x5C:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request failed: identd not running on client")
+	case 0x5D:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request failed: identd could not confirm user ID")
+	default:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 unknown status code: 0x%02X", status)
+	}
+}
+
+// connectViaSOCKS5Proxy connects through a SOCKS5 proxy using golang.org/x/net/proxy.
+//
+// SOCKS5 Protocol (RFC 1928):
+//   - Supports IPv4 and IPv6
+//   - Optional authentication (username/password)
+//   - Can resolve DNS via proxy or locally
+//
+// We use the proven golang.org/x/net/proxy library for SOCKS5 instead of
+// manual implementation for reliability and RFC compliance.
+func (t *Transport) connectViaSOCKS5Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr string, targetAddr string, timeout time.Duration) (net.Conn, error) {
+	// Create SOCKS5 authentication if credentials provided
+	var auth *netproxy.Auth
+	if proxy.Username != "" {
+		auth = &netproxy.Auth{
+			User:     proxy.Username,
+			Password: proxy.Password,
 		}
 	}
 
-	dialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{Timeout: timeout})
+	// Create SOCKS5 dialer
+	dialer, err := netproxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{Timeout: timeout})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
 	}
 
-	return dialer.Dial("tcp", targetAddr)
+	// Dial target through SOCKS5 proxy
+	// Note: golang.org/x/net/proxy automatically resolves DNS via proxy by default
+	conn, err := dialer.Dial("tcp", targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("SOCKS5 connection failed: %w", err)
+	}
+
+	return conn, nil
 }
 
 // Close gracefully shuts down the Transport by stopping background goroutines
