@@ -136,7 +136,28 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 		opts = t.options
 	}
 
-	addr := fmt.Sprintf("%s:%d", host, port)
+	// Create pool key that includes proxy information if present
+	// This ensures different proxies use different pooled connections
+	var poolKey string
+	if opts.Proxy != nil {
+		proxyPort := opts.Proxy.Port
+		if proxyPort == 0 {
+			// Apply default port
+			switch opts.Proxy.Type {
+			case "http":
+				proxyPort = 8080
+			case "https":
+				proxyPort = 443
+			case "socks4", "socks5":
+				proxyPort = 1080
+			}
+		}
+		// Format: "proxy_type:proxy_host:proxy_port->target_host:target_port"
+		poolKey = fmt.Sprintf("%s:%s:%d->%s:%d", opts.Proxy.Type, opts.Proxy.Host, proxyPort, host, port)
+	} else {
+		// Direct connection: just use target address
+		poolKey = fmt.Sprintf("%s:%d", host, port)
+	}
 
 	// Check for existing connection if reuse is enabled
 	// Use write lock to prevent race conditions when multiple goroutines
@@ -145,7 +166,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	if opts.ReuseConnection {
 		t.mu.Lock()
 		needUnlock = true
-		if conn, exists := t.connections[addr]; exists && !conn.Closed {
+		if conn, exists := t.connections[poolKey]; exists && !conn.Closed {
 			// Wait for connection to be ready if it's still initializing
 			if !conn.Ready {
 				t.mu.Unlock()
@@ -159,7 +180,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 				// Connection failed or timed out, create a new one
 				t.mu.Lock()
 				needUnlock = true
-				delete(t.connections, addr)
+				delete(t.connections, poolKey)
 			} else {
 				t.mu.Unlock()
 				return conn, nil
@@ -174,10 +195,12 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 
 	if scheme == "https" {
 		// TLS connection with ALPN (with optional proxy support)
-		rawConn, err = t.connectTLS(ctx, addr, host, opts)
+		targetAddr := fmt.Sprintf("%s:%d", host, port)
+		rawConn, err = t.connectTLS(ctx, targetAddr, host, opts)
 	} else {
 		// Plain TCP connection (H2C)
-		rawConn, err = t.connectH2C(ctx, addr)
+		targetAddr := fmt.Sprintf("%s:%d", host, port)
+		rawConn, err = t.connectH2C(ctx, targetAddr)
 	}
 
 	if err != nil {
@@ -229,13 +252,13 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	if opts.ReuseConnection {
 		t.mu.Lock()
 		// Check if someone else created a connection while we were initializing
-		if existing, exists := t.connections[addr]; exists && existing.Ready && !existing.Closed {
+		if existing, exists := t.connections[poolKey]; exists && existing.Ready && !existing.Closed {
 			t.mu.Unlock()
 			// Use the existing connection and close ours
 			conn.Close()
 			return existing, nil
 		}
-		t.connections[addr] = conn
+		t.connections[poolKey] = conn
 		t.mu.Unlock()
 	}
 

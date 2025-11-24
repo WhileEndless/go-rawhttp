@@ -186,7 +186,29 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 	}
 
 	metadata := &ConnectionMetadata{}
-	poolKey := fmt.Sprintf("%s:%d", config.Host, config.Port)
+
+	// Create a connection pool key that includes proxy information if present
+	// This ensures different proxies use different pooled connections
+	var poolKey string
+	if config.Proxy != nil {
+		proxyPort := config.Proxy.Port
+		if proxyPort == 0 {
+			// Apply default port
+			switch config.Proxy.Type {
+			case "http":
+				proxyPort = 8080
+			case "https":
+				proxyPort = 443
+			case "socks4", "socks5":
+				proxyPort = 1080
+			}
+		}
+		// Format: "proxy_type:proxy_host:proxy_port->target_host:target_port"
+		poolKey = fmt.Sprintf("%s:%s:%d->%s:%d", config.Proxy.Type, config.Proxy.Host, proxyPort, config.Host, config.Port)
+	} else {
+		// Direct connection: just use target address
+		poolKey = fmt.Sprintf("%s:%d", config.Host, config.Port)
+	}
 
 	// Try to get connection from pool if ReuseConnection is enabled
 	if config.ReuseConnection {
