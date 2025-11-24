@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/buffer"
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
-	"github.com/WhileEndless/go-rawhttp/pkg/transport"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/buffer"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/transport"
 )
 
 const (

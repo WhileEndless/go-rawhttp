@@ -9,7 +9,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/http2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/http2"
 )
 
 // This example demonstrates low-level HTTP/2 frame manipulation

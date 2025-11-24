@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-2.0.4-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -41,8 +41,25 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 
 ## Installation
 
+> **📦 Module Path Migration:** Starting with v2.0.4, this package uses the `/v2` module path as per Go modules best practices.
+>
+> **For new projects:**
+> ```bash
+> go get github.com/WhileEndless/go-rawhttp/v2
+> ```
+>
+> **Upgrading from v2.0.3 or earlier:**
+> ```bash
+> # Update your imports from:
+> # import "github.com/WhileEndless/go-rawhttp"
+> # To:
+> # import rawhttp "github.com/WhileEndless/go-rawhttp/v2"
+>
+> go get github.com/WhileEndless/go-rawhttp/v2
+> ```
+
 ```bash
-go get github.com/WhileEndless/go-rawhttp
+go get github.com/WhileEndless/go-rawhttp/v2
 ```
 
 ## Quick Start
@@ -55,7 +72,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/WhileEndless/go-rawhttp"
+    rawhttp "github.com/WhileEndless/go-rawhttp/v2"
 )
 
 func main() {
@@ -1122,7 +1139,7 @@ See [MIGRATION_V2.md](docs/MIGRATION_V2.md) for full migration guide.
 
 #### Simple Proxy Usage (ParseProxyURL)
 ```go
-import "github.com/WhileEndless/go-rawhttp"
+import rawhttp "github.com/WhileEndless/go-rawhttp/v2"
 
 // HTTP proxy - simple and convenient!
 opts := rawhttp.Options{

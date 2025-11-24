@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/http2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/http2"
 	gohttp2 "golang.org/x/net/http2"
 )
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 func TestPartialWriteHandling(t *testing.T) {

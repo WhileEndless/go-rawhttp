@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 func TestClientHTTPChunked(t *testing.T) {

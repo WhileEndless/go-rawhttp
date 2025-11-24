@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
 	netproxy "golang.org/x/net/proxy"
 )
 

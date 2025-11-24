@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	rawhttp "github.com/WhileEndless/go-rawhttp"
+	rawhttp "github.com/WhileEndless/go-rawhttp/v2"
 )
 
 func main() {

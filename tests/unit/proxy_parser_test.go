@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/client"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/client"
 )
 
 func TestParseProxyURL_HTTP(t *testing.T) {

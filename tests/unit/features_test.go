@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestRawResponsePreservation verifies that Response.Raw contains complete raw HTTP response

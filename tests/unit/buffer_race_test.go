@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/buffer"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/buffer"
 )
 
 func TestBufferConcurrentClose(t *testing.T) {

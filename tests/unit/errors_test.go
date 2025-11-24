@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
 )
 
 func TestErrorTypes(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
 )
 
 const (

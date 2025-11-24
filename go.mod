@@ -1,4 +1,4 @@
-module github.com/WhileEndless/go-rawhttp
+module github.com/WhileEndless/go-rawhttp/v2
 
 go 1.24.0
 

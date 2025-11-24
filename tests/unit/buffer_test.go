@@ -4,7 +4,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/buffer"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/buffer"
 )
 
 func TestBufferMemoryLimit(t *testing.T) {

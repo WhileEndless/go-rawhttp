@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/transport"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/transport"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 	netproxy "golang.org/x/net/proxy"

@@ -3,8 +3,8 @@ package unit
 import (
 	"testing"
 
-	"github.com/WhileEndless/go-rawhttp"
-	"github.com/WhileEndless/go-rawhttp/pkg/client"
+	"github.com/WhileEndless/go-rawhttp/v2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/client"
 )
 
 // TestHTTP2DebugFlags tests the new HTTP/2 Debug structure

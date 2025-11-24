@@ -4,8 +4,8 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"github.com/WhileEndless/go-rawhttp"
-	"github.com/WhileEndless/go-rawhttp/pkg/tlsconfig"
+	"github.com/WhileEndless/go-rawhttp/v2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/tlsconfig"
 )
 
 // TestTLSVersionControl tests SSL/TLS version configuration

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestHTTP2PortFormattingFix tests that Bug #2 (port double formatting) is fixed in HTTP/2 client

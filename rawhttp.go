@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/buffer"
-	"github.com/WhileEndless/go-rawhttp/pkg/client"
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
-	"github.com/WhileEndless/go-rawhttp/pkg/http2"
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
-	"github.com/WhileEndless/go-rawhttp/pkg/transport"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/buffer"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/client"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/http2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/transport"
 )
 
 // Version is the current version of the rawhttp library

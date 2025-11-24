@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 )

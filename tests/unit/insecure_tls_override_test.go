@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestInsecureTLSWithCustomTLSConfig tests that InsecureTLS flag works with custom TLSConfig

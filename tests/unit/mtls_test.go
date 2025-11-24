@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
-	"github.com/WhileEndless/go-rawhttp/pkg/transport"
+	"github.com/WhileEndless/go-rawhttp/v2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/transport"
 )
 
 // TestClientCertificateLoading tests client certificate loading from PEM data

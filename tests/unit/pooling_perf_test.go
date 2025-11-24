@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestConnectionPoolingPerformance validates that connection pooling improves performance

@@ -9,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 func main() {

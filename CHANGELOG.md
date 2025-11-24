@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.4] - 2025-11-24
 
+### ⚠️ BREAKING CHANGE: Module Path Migration
+
+**Module path has been updated to `/v2` to follow Go modules semantic import versioning best practices.**
+
+**What changed:**
+```go
+// OLD (v2.0.3 and earlier):
+import "github.com/WhileEndless/go-rawhttp"
+
+// NEW (v2.0.4+):
+import rawhttp "github.com/WhileEndless/go-rawhttp/v2"
+```
+
+**Migration steps:**
+1. Update all import statements to include `/v2` suffix
+2. Run `go get github.com/WhileEndless/go-rawhttp/v2`
+3. Run `go mod tidy`
+
+**Why this change:**
+- Follows Go modules semantic versioning specification
+- Enables proper version resolution: `go get github.com/WhileEndless/go-rawhttp/v2@latest`
+- Prevents import conflicts between major versions
+- Industry standard for Go libraries (e.g., `google.golang.org/grpc`, `gopkg.in/yaml.v3`)
+
+**Impact:**
+- All existing v2.0.0-2.0.3 users must update imports
+- No functional changes - only import path differs
+- GitHub repository URL remains unchanged
+
 ### 🐛 Bug Fixes
 
 **HTTP/1.1 ALPN Protocol Enforcement**

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
-	"github.com/WhileEndless/go-rawhttp/pkg/errors"
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/errors"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
 )
 
 // Note: TestTLSConfigPassthrough moved to tls_config_test.go for more comprehensive testing

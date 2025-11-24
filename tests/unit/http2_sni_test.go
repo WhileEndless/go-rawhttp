@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestHTTP2_SNI tests Server Name Indication (SNI) configuration for HTTP/2

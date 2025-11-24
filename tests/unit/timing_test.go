@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp/pkg/timing"
+	"github.com/WhileEndless/go-rawhttp/v2/pkg/timing"
 )
 
 func TestTimer(t *testing.T) {

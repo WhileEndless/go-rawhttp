@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WhileEndless/go-rawhttp"
+	"github.com/WhileEndless/go-rawhttp/v2"
 )
 
 // TestPortFormatting tests that port numbers are correctly formatted in dial addresses
