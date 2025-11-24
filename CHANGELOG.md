@@ -5,7 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.4] - 2025-11-24
+## [2.0.5] - 2025-11-24
+
+### 🔧 Fixes
+
+**Git Tag Correction**
+
+Fixed v2.0.4 tag pointing issue. Released as v2.0.5 to ensure proper module resolution.
+
+- Tag v2.0.4 initially pointed to wrong commit (before /v2 migration)
+- Go module cache caused resolution issues
+- v2.0.5 ensures clean /v2 module path from start
+
+**No functional changes from v2.0.4** - only version bump for proper module resolution.
+
+## [2.0.4] - 2025-11-24 (SKIP - Use v2.0.5 instead)
 
 ### ⚠️ BREAKING CHANGE: Module Path Migration
 
