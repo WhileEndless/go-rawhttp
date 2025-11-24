@@ -121,6 +121,9 @@ type ConnectionMetadata struct {
 	ProxyUsed bool   // Whether request went through proxy
 	ProxyType string // Proxy type: "http", "https", "socks4", "socks5"
 	ProxyAddr string // Proxy address: "proxy.com:8080"
+
+	// Connection pooling (v2.0.3+)
+	PoolKey string // Pool key used for this connection (includes proxy info)
 }
 
 // pooledConnection wraps a connection with metadata
@@ -215,6 +218,7 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 		if conn, meta, ok := t.getFromPool(poolKey); ok {
 			metadata = meta
 			metadata.ConnectionReused = true
+			metadata.PoolKey = poolKey // Store pool key for release/close
 			return conn, metadata, nil
 		}
 	}
@@ -277,6 +281,9 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 	} else {
 		metadata.NegotiatedProtocol = "HTTP/1.1"
 	}
+
+	// Store pool key in metadata for release/close operations
+	metadata.PoolKey = poolKey
 
 	// Add to pool if ReuseConnection is enabled
 	if config.ReuseConnection {
@@ -544,7 +551,18 @@ func (t *Transport) addToPool(key string, conn net.Conn, metadata *ConnectionMet
 
 // ReleaseConnection marks a connection as available for reuse
 func (t *Transport) ReleaseConnection(host string, port int, conn net.Conn) {
-	key := fmt.Sprintf("%s:%d", host, port)
+	t.ReleaseConnectionWithMetadata(host, port, conn, nil)
+}
+
+// ReleaseConnectionWithMetadata marks a connection as available for reuse using metadata pool key
+func (t *Transport) ReleaseConnectionWithMetadata(host string, port int, conn net.Conn, metadata *ConnectionMetadata) {
+	// Use pool key from metadata if available (v2.0.3+), otherwise fallback to old format
+	var key string
+	if metadata != nil && metadata.PoolKey != "" {
+		key = metadata.PoolKey
+	} else {
+		key = fmt.Sprintf("%s:%d", host, port)
+	}
 
 	t.poolMutex.Lock()
 	defer t.poolMutex.Unlock()
@@ -563,7 +581,18 @@ func (t *Transport) ReleaseConnection(host string, port int, conn net.Conn) {
 
 // CloseConnection closes and removes a connection from the pool
 func (t *Transport) CloseConnection(host string, port int, conn net.Conn) {
-	key := fmt.Sprintf("%s:%d", host, port)
+	t.CloseConnectionWithMetadata(host, port, conn, nil)
+}
+
+// CloseConnectionWithMetadata closes and removes a connection from the pool using metadata pool key
+func (t *Transport) CloseConnectionWithMetadata(host string, port int, conn net.Conn, metadata *ConnectionMetadata) {
+	// Use pool key from metadata if available (v2.0.3+), otherwise fallback to old format
+	var key string
+	if metadata != nil && metadata.PoolKey != "" {
+		key = metadata.PoolKey
+	} else {
+		key = fmt.Sprintf("%s:%d", host, port)
+	}
 
 	t.poolMutex.Lock()
 	defer t.poolMutex.Unlock()
@@ -729,6 +758,14 @@ func (t *Transport) connectViaProxy(ctx context.Context, config Config, targetAd
 	if err != nil {
 		// Wrap error as ProxyError
 		return nil, nil, errors.NewProxyError(proxy.Type, proxyAddr, "connect", err)
+	}
+
+	// Update metadata with actual connected address (proxy, not target)
+	if remoteAddr := conn.RemoteAddr(); remoteAddr != nil {
+		if tcpAddr, ok := remoteAddr.(*net.TCPAddr); ok {
+			metadata.ConnectedIP = tcpAddr.IP.String()
+			metadata.ConnectedPort = tcpAddr.Port
+		}
 	}
 
 	return conn, metadata, nil

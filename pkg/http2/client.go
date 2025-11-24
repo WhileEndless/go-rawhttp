@@ -85,7 +85,14 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 	}
 	// Don't close if connection pooling is enabled
 	if !c.options.ReuseConnection {
-		defer c.transport.CloseConnection(fmt.Sprintf("%s:%d", host, port))
+		// Use pool key from connection if available, otherwise fallback to old format
+		defer func() {
+			if conn.PoolKey != "" {
+				c.transport.CloseConnection(conn.PoolKey)
+			} else {
+				c.transport.CloseConnection(fmt.Sprintf("%s:%d", host, port))
+			}
+		}()
 	}
 	timer.EndTCP()
 
@@ -432,8 +439,8 @@ func (c *Client) fillConnectionMetadata(response *Response, conn *Connection, ho
 		}
 	}
 
-	// Connection reuse
-	response.ConnectionReused = opts != nil && opts.ReuseConnection
+	// Connection reuse (v2.0.3+: use actual reuse status from connection)
+	response.ConnectionReused = conn.Reused
 
 	// Proxy information
 	if opts != nil && opts.Proxy != nil {

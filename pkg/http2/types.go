@@ -320,6 +320,8 @@ type Connection struct {
 	Closed         bool
 	Ready          bool         // True when SETTINGS handshake is complete
 	LastActivity   time.Time    // For idle timeout tracking
+	PoolKey        string       // Pool key for this connection (v2.0.3+)
+	Reused         bool         // True if connection was reused from pool (v2.0.3+)
 	mu             sync.RWMutex // Protects connection state
 }
 

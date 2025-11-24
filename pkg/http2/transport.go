@@ -175,6 +175,8 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 					time.Sleep(10 * time.Millisecond)
 				}
 				if conn.Ready && !conn.Closed {
+					conn.PoolKey = poolKey // Ensure pool key is set
+					conn.Reused = true    // Mark as reused from pool
 					return conn, nil
 				}
 				// Connection failed or timed out, create a new one
@@ -183,6 +185,8 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 				delete(t.connections, poolKey)
 			} else {
 				t.mu.Unlock()
+				conn.PoolKey = poolKey // Ensure pool key is set
+				conn.Reused = true    // Mark as reused from pool
 				return conn, nil
 			}
 		}
@@ -245,6 +249,9 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 		return nil, fmt.Errorf("failed to send settings: %w", err)
 	}
 
+	// Store pool key before marking as ready
+	conn.PoolKey = poolKey
+
 	// Mark connection as ready
 	conn.Ready = true
 
@@ -256,6 +263,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 			t.mu.Unlock()
 			// Use the existing connection and close ours
 			conn.Close()
+			existing.PoolKey = poolKey // Ensure pool key is set
 			return existing, nil
 		}
 		t.connections[poolKey] = conn

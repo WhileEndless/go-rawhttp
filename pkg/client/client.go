@@ -393,9 +393,9 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	shouldClose := !opts.ReuseConnection
 	defer func() {
 		if shouldClose {
-			c.transport.CloseConnection(opts.Host, opts.Port, conn)
+			c.transport.CloseConnectionWithMetadata(opts.Host, opts.Port, conn, connMetadata)
 		} else {
-			c.transport.ReleaseConnection(opts.Host, opts.Port, conn)
+			c.transport.ReleaseConnectionWithMetadata(opts.Host, opts.Port, conn, connMetadata)
 		}
 	}()
 

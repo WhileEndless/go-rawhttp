@@ -33,10 +33,11 @@ func testHTTP1PoolingWithProxy() {
 	ctx := context.Background()
 
 	opts := rawhttp.Options{
-		Host:     "cyberwise.com",
-		Port:     443,
-		Scheme:   "https",
-		Protocol: "http/1.1",
+		Host:            "cyberwise.com",
+		Port:            443,
+		Scheme:          "https",
+		Protocol:        "http/1.1",
+		ReuseConnection: true, // Enable connection pooling
 		Proxy: &rawhttp.ProxyConfig{
 			Type: "http",
 			Host: "127.0.0.1",
@@ -56,10 +57,16 @@ func testHTTP1PoolingWithProxy() {
 	}
 
 	fmt.Printf("Request 1:\n")
+	fmt.Printf("  Protocol: %s\n", resp1.HTTPVersion)
+	fmt.Printf("  Negotiated Protocol: %s\n", resp1.NegotiatedProtocol)
 	fmt.Printf("  Connected IP: %s:%d\n", resp1.ConnectedIP, resp1.ConnectedPort)
 	fmt.Printf("  Connection Reused: %v\n", resp1.ConnectionReused)
 	fmt.Printf("  Proxy: %s (%v)\n", resp1.ProxyAddr, resp1.ProxyUsed)
 	fmt.Printf("  Body Size: %d bytes\n", resp1.BodyBytes)
+
+	// Close response to release connection back to pool
+	resp1.Body.Close()
+	resp1.Raw.Close()
 
 	// Small delay
 	time.Sleep(100 * time.Millisecond)
@@ -72,10 +79,16 @@ func testHTTP1PoolingWithProxy() {
 	}
 
 	fmt.Printf("\nRequest 2:\n")
+	fmt.Printf("  Protocol: %s\n", resp2.HTTPVersion)
+	fmt.Printf("  Negotiated Protocol: %s\n", resp2.NegotiatedProtocol)
 	fmt.Printf("  Connected IP: %s:%d\n", resp2.ConnectedIP, resp2.ConnectedPort)
 	fmt.Printf("  Connection Reused: %v\n", resp2.ConnectionReused)
 	fmt.Printf("  Proxy: %s (%v)\n", resp2.ProxyAddr, resp2.ProxyUsed)
 	fmt.Printf("  Body Size: %d bytes\n", resp2.BodyBytes)
+
+	// Close second response
+	resp2.Body.Close()
+	resp2.Raw.Close()
 
 	if resp2.ConnectionReused {
 		fmt.Printf("\n✓ SUCCESS: Connection was properly reused!\n")
@@ -89,10 +102,11 @@ func testHTTP2PoolingWithProxy() {
 	ctx := context.Background()
 
 	opts := rawhttp.Options{
-		Host:     "cyberwise.com",
-		Port:     443,
-		Scheme:   "https",
-		Protocol: "http/2",
+		Host:            "cyberwise.com",
+		Port:            443,
+		Scheme:          "https",
+		Protocol:        "http/2",
+		ReuseConnection: true, // Enable connection pooling
 		Proxy: &rawhttp.ProxyConfig{
 			Type: "http",
 			Host: "127.0.0.1",
@@ -118,6 +132,10 @@ func testHTTP2PoolingWithProxy() {
 	fmt.Printf("  Proxy: %s (%v)\n", resp1.ProxyAddr, resp1.ProxyUsed)
 	fmt.Printf("  Body Size: %d bytes\n", resp1.BodyBytes)
 
+	// Close response to release connection back to pool
+	resp1.Body.Close()
+	resp1.Raw.Close()
+
 	// Small delay
 	time.Sleep(100 * time.Millisecond)
 
@@ -135,6 +153,10 @@ func testHTTP2PoolingWithProxy() {
 	fmt.Printf("  Proxy: %s (%v)\n", resp2.ProxyAddr, resp2.ProxyUsed)
 	fmt.Printf("  Body Size: %d bytes\n", resp2.BodyBytes)
 
+	// Close second response
+	resp2.Body.Close()
+	resp2.Raw.Close()
+
 	if resp2.ConnectionReused {
 		fmt.Printf("\n✓ SUCCESS: HTTP/2 connection was properly reused!\n")
 	} else {
@@ -149,10 +171,11 @@ func testDifferentProxiesNoSharing() {
 
 	// Options with proxy
 	opts1 := rawhttp.Options{
-		Host:     "cyberwise.com",
-		Port:     443,
-		Scheme:   "https",
-		Protocol: "http/1.1",
+		Host:            "cyberwise.com",
+		Port:            443,
+		Scheme:          "https",
+		Protocol:        "http/1.1",
+		ReuseConnection: true, // Enable connection pooling
 		Proxy: &rawhttp.ProxyConfig{
 			Type: "http",
 			Host: "127.0.0.1",
@@ -163,11 +186,12 @@ func testDifferentProxiesNoSharing() {
 
 	// Options without proxy
 	opts2 := rawhttp.Options{
-		Host:        "cyberwise.com",
-		Port:        443,
-		Scheme:      "https",
-		Protocol:    "http/1.1",
-		InsecureTLS: true,
+		Host:            "cyberwise.com",
+		Port:            443,
+		Scheme:          "https",
+		Protocol:        "http/1.1",
+		ReuseConnection: true, // Enable connection pooling
+		InsecureTLS:     true,
 		// No proxy
 	}
 
