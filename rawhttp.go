@@ -169,7 +169,8 @@ func (s *Sender) detectProtocol(req []byte, opts Options) string {
 	}
 
 	// If proxy is configured and protocol not specified, prefer HTTP/1.1
-	// because HTTP/2 transport doesn't support proxies yet
+	// HTTP/2 with proxy support added in v2.0.3+, but HTTP/1.1 is safer default
+	// for maximum proxy compatibility (some proxies don't handle HTTP/2 well)
 	if opts.Proxy != nil {
 		return "http/1.1"
 	}
@@ -259,6 +260,9 @@ func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
 			ResolveDNSViaProxy: opts.Proxy.ResolveDNSViaProxy,
 		}
 	}
+
+	// Pass connection pooling setting (v2.0.3+)
+	h2opts.ReuseConnection = opts.ReuseConnection
 
 	return h2opts
 }

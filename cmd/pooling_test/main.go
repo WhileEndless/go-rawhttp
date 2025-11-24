@@ -29,6 +29,8 @@ func main() {
 }
 
 func testHTTP1PoolingWithProxy() {
+	// IMPORTANT: Create NEW sender for this test to have fresh connection pool
+	// In real usage, same sender instance would be reused across requests
 	sender := rawhttp.NewSender()
 	ctx := context.Background()
 
@@ -68,8 +70,8 @@ func testHTTP1PoolingWithProxy() {
 	resp1.Body.Close()
 	resp1.Raw.Close()
 
-	// Small delay
-	time.Sleep(100 * time.Millisecond)
+	// Small delay to ensure release completes
+	time.Sleep(500 * time.Millisecond)
 
 	// Make second request - should reuse connection
 	resp2, err := sender.Do(ctx, rawReq, opts)
@@ -100,6 +102,8 @@ func testHTTP1PoolingWithProxy() {
 func testHTTP2PoolingWithProxy() {
 	sender := rawhttp.NewSender()
 	ctx := context.Background()
+
+	fmt.Println("[DEBUG] HTTP/2 Test Starting...")
 
 	opts := rawhttp.Options{
 		Host:            "cyberwise.com",
@@ -136,8 +140,8 @@ func testHTTP2PoolingWithProxy() {
 	resp1.Body.Close()
 	resp1.Raw.Close()
 
-	// Small delay
-	time.Sleep(100 * time.Millisecond)
+	// Small delay to ensure release completes
+	time.Sleep(500 * time.Millisecond)
 
 	// Make second HTTP/2 request - should reuse connection
 	resp2, err := sender.Do(ctx, rawReq, opts)

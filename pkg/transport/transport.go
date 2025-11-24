@@ -515,11 +515,18 @@ func (t *Transport) getFromPool(key string) (net.Conn, *ConnectionMetadata, bool
 		return nil, nil, false
 	}
 
-	// Check if connection is still alive
-	if !t.isConnectionAlive(pooled.conn) {
-		t.connPool.Delete(key)
-		pooled.conn.Close()
-		return nil, nil, false
+	// Skip liveness check for recently used connections (v2.0.3+)
+	// Recent connections are likely still alive, and liveness check has false positives
+	// with HTTP/2 (control frames) and TLS (buffered data)
+	recentlyUsed := time.Since(pooled.lastUsed) < 5*time.Second
+
+	if !recentlyUsed {
+		// Check if connection is still alive (only for stale connections)
+		if !t.isConnectionAlive(pooled.conn) {
+			t.connPool.Delete(key)
+			pooled.conn.Close()
+			return nil, nil, false
+		}
 	}
 
 	pooled.inUse = true
