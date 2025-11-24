@@ -3,8 +3,10 @@ package http2
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -145,6 +147,9 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 		FramesSent:     len(frames),
 		FramesReceived: len(response.Frames),
 	}
+
+	// Add connection metadata
+	c.fillConnectionMetadata(response, conn, host, port, scheme, opts)
 
 	return response, nil
 }
@@ -308,6 +313,7 @@ func (c *Client) readResponse(ctx context.Context, conn *Connection, stream *Str
 			for name, value := range headers {
 				if name == ":status" {
 					response.Status, _ = strconv.Atoi(value)
+					response.StatusText = getStatusText(response.Status)
 				} else if !strings.HasPrefix(name, ":") {
 					response.Headers[name] = append(response.Headers[name], value)
 				}
@@ -389,6 +395,65 @@ func (c *Client) readResponse(ctx context.Context, conn *Connection, stream *Str
 	}
 
 	return response, nil
+}
+
+// fillConnectionMetadata populates connection metadata in the response
+func (c *Client) fillConnectionMetadata(response *Response, conn *Connection, host string, port int, scheme string, opts *Options) {
+	// Get remote address
+	if conn.Conn != nil {
+		if remoteAddr := conn.Conn.RemoteAddr(); remoteAddr != nil {
+			if tcpAddr, ok := remoteAddr.(*net.TCPAddr); ok {
+				response.ConnectedIP = tcpAddr.IP.String()
+				response.ConnectedPort = tcpAddr.Port
+			}
+		}
+	}
+
+	// Get TLS information if this is an HTTPS connection
+	if scheme == "https" {
+		if tlsConn, ok := conn.Conn.(*tls.Conn); ok {
+			state := tlsConn.ConnectionState()
+
+			// TLS Version
+			response.TLSVersion = getTLSVersionString(state.Version)
+
+			// Cipher Suite
+			response.TLSCipherSuite = tls.CipherSuiteName(state.CipherSuite)
+
+			// Negotiated Protocol (ALPN)
+			response.NegotiatedProtocol = state.NegotiatedProtocol
+
+			// Server Name (SNI)
+			response.TLSServerName = state.ServerName
+		}
+	}
+
+	// Connection reuse
+	response.ConnectionReused = opts != nil && opts.ReuseConnection
+
+	// Proxy information - HTTP/2 doesn't support proxies directly yet
+	// But we include this for future compatibility
+	response.ProxyUsed = false
+	response.ProxyType = ""
+	response.ProxyAddr = ""
+}
+
+// getTLSVersionString converts TLS version constant to string
+func getTLSVersionString(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	case tls.VersionSSL30:
+		return "SSL 3.0"
+	default:
+		return fmt.Sprintf("Unknown (0x%04x)", version)
+	}
 }
 
 // Close closes the HTTP/2 client

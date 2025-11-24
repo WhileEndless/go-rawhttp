@@ -221,6 +221,20 @@ type Response struct {
 
 	// Timing information
 	TotalTime time.Duration // Total time taken for the request
+
+	// Connection metadata (added for compatibility with HTTP/1.1 Response)
+	ConnectedIP        string // Actual IP address connected to
+	ConnectedPort      int    // Actual port connected to
+	NegotiatedProtocol string // Negotiated protocol via ALPN (e.g., "h2")
+	TLSVersion         string // TLS version used (e.g., "TLS 1.3")
+	TLSCipherSuite     string // TLS cipher suite used
+	TLSServerName      string // TLS Server Name (SNI)
+	ConnectionReused   bool   // Whether connection was reused from pool
+
+	// Proxy metadata (added for consistency with HTTP/1.1)
+	ProxyUsed bool   // Whether an upstream proxy was used
+	ProxyType string // Proxy type (http, https, socks4, socks5)
+	ProxyAddr string // Proxy server address
 }
 
 // PushPromise represents a server push promise

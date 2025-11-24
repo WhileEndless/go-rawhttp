@@ -5,6 +5,7 @@ package rawhttp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -262,15 +263,44 @@ func (s *Sender) convertHTTP2Response(resp *http2.Response) *Response {
 		headers[k] = v
 	}
 
+	// Calculate body and raw sizes
+	bodyBytes := int64(len(resp.Body))
+	rawBytes := int64(len(rawText))
+
+	// Generate status line
+	statusLine := fmt.Sprintf("HTTP/2 %d %s", resp.Status, resp.StatusText)
+
 	return &Response{
 		StatusCode:  resp.Status,
+		StatusLine:  statusLine,
 		Headers:     headers,
 		Body:        buffer.NewWithData(resp.Body),
 		Raw:         rawBuf,
 		HTTPVersion: resp.HTTPVersion,
-		Metrics: &timing.Metrics{
-			Total: resp.TotalTime, // Use actual timing from HTTP/2 client
+		BodyBytes:   bodyBytes,
+		RawBytes:    rawBytes,
+
+		// Timing metrics
+		Timings: timing.Metrics{
+			TotalTime: resp.TotalTime,
 		},
+		Metrics: &timing.Metrics{
+			TotalTime: resp.TotalTime,
+		},
+
+		// Connection metadata
+		ConnectedIP:        resp.ConnectedIP,
+		ConnectedPort:      resp.ConnectedPort,
+		NegotiatedProtocol: resp.NegotiatedProtocol,
+		TLSVersion:         resp.TLSVersion,
+		TLSCipherSuite:     resp.TLSCipherSuite,
+		TLSServerName:      resp.TLSServerName,
+		ConnectionReused:   resp.ConnectionReused,
+
+		// Proxy metadata
+		ProxyUsed: resp.ProxyUsed,
+		ProxyType: resp.ProxyType,
+		ProxyAddr: resp.ProxyAddr,
 	}
 }
 
