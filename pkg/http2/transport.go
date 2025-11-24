@@ -7,8 +7,10 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/WhileEndless/go-rawhttp/pkg/transport"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+	netproxy "golang.org/x/net/proxy"
 )
 
 const (
@@ -836,14 +839,115 @@ func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxy *ProxyConfig,
 	return conn, nil
 }
 
-// connectViaSOCKS4Proxy connects through a SOCKS4 proxy (simplified version for HTTP/2)
+// connectViaSOCKS4Proxy connects through a SOCKS4 proxy
 func (t *Transport) connectViaSOCKS4Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr, targetAddr string, timeout time.Duration) (net.Conn, error) {
-	// TODO: Implement SOCKS4 support for HTTP/2
-	return nil, fmt.Errorf("SOCKS4 proxy support for HTTP/2 not yet implemented")
+	// Parse target address
+	host, portStr, err := net.SplitHostPort(targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target address: %w", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port: %w", err)
+	}
+
+	// SOCKS4 requires IPv4 address - resolve hostname
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS resolution failed for %s: %w", host, err)
+	}
+
+	var targetIP net.IP
+	for _, ip := range ips {
+		if ip4 := ip.To4(); ip4 != nil {
+			targetIP = ip4
+			break
+		}
+	}
+	if targetIP == nil {
+		return nil, fmt.Errorf("no IPv4 address found for %s (SOCKS4 requires IPv4)", host)
+	}
+
+	// Connect to SOCKS4 proxy
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SOCKS4 proxy: %w", err)
+	}
+
+	// Build SOCKS4 request
+	// Format: [VER(0x04)][CMD(0x01=CONNECT)][PORT(2 bytes)][IP(4 bytes)][USERID][NULL]
+	req := []byte{
+		0x04, // VER: SOCKS version 4
+		0x01, // CMD: CONNECT command
+		byte(port >> 8),   // PORT high byte
+		byte(port & 0xFF), // PORT low byte
+	}
+	req = append(req, targetIP...) // IP address (4 bytes)
+
+	// Add user ID if provided
+	if proxy.Username != "" {
+		req = append(req, []byte(proxy.Username)...)
+	}
+	req = append(req, 0x00) // NULL terminator
+
+	// Send SOCKS4 request
+	if _, err := conn.Write(req); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send SOCKS4 request: %w", err)
+	}
+
+	// Read SOCKS4 response (8 bytes)
+	resp := make([]byte, 8)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read SOCKS4 response: %w", err)
+	}
+
+	// Check response status
+	status := resp[1]
+	switch status {
+	case 0x5A:
+		// Request granted - success!
+		return conn, nil
+	case 0x5B:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request rejected or failed")
+	case 0x5C:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request failed: identd not running on client")
+	case 0x5D:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 request failed: identd could not confirm user ID")
+	default:
+		conn.Close()
+		return nil, fmt.Errorf("SOCKS4 unknown status code: 0x%02X", status)
+	}
 }
 
-// connectViaSOCKS5Proxy connects through a SOCKS5 proxy (simplified version for HTTP/2)
+// connectViaSOCKS5Proxy connects through a SOCKS5 proxy using golang.org/x/net/proxy
 func (t *Transport) connectViaSOCKS5Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr, targetAddr string, timeout time.Duration) (net.Conn, error) {
-	// TODO: Implement SOCKS5 support for HTTP/2
-	return nil, fmt.Errorf("SOCKS5 proxy support for HTTP/2 not yet implemented")
+	// Create SOCKS5 authentication if credentials provided
+	var auth *netproxy.Auth
+	if proxy.Username != "" {
+		auth = &netproxy.Auth{
+			User:     proxy.Username,
+			Password: proxy.Password,
+		}
+	}
+
+	// Create SOCKS5 dialer
+	dialer, err := netproxy.SOCKS5("tcp", proxyAddr, auth, &net.Dialer{Timeout: timeout})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SOCKS5 dialer: %w", err)
+	}
+
+	// Dial target through SOCKS5 proxy
+	// Note: golang.org/x/net/proxy automatically resolves DNS via proxy by default
+	conn, err := dialer.Dial("tcp", targetAddr)
+	if err != nil {
+		return nil, fmt.Errorf("SOCKS5 connection failed: %w", err)
+	}
+
+	return conn, nil
 }
