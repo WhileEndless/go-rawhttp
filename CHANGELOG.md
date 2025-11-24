@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] - 2025-11-24
+
+### 🐛 Bug Fixes
+
+**HTTP/1.1 ALPN Protocol Enforcement**
+
+Enhanced HTTP/1.1 protocol enforcement to prevent unexpected HTTP/2 negotiation with custom TLS configurations.
+
+**Changes:**
+- Force `NextProtos = ["http/1.1"]` for all HTTP/1.1 transport connections
+- Applied to both default and custom TLSConfig paths
+- Ensures HTTP/1.1 transport never negotiates HTTP/2 via ALPN
+- Users wanting HTTP/2 must explicitly use `Protocol: "http/2"`
+
+**Why:** When users provide custom TLSConfig without NextProtos, Go's TLS library could negotiate HTTP/2 with servers that advertise h2 support, causing protocol mismatch in HTTP/1.1 transport.
+
+**Files:** `pkg/transport/transport.go` (line 388-392)
+
+**Proxy Connection Optimization**
+
+Added `Connection: keep-alive` header to HTTP proxy CONNECT requests for better connection management.
+
+**Files:** `pkg/transport/transport.go` (line 836)
+
+### 🧹 Code Quality
+
+- Removed debug logging statements used during development
+- Cleaned up temporary test files
+- Enhanced CHANGELOG documentation with detailed fix descriptions
+
 ## [2.0.3] - 2025-11-24
 
 ### ✨ New Features
@@ -149,6 +179,42 @@ Direct (no proxy): "example.com:443"
 - Verifies different proxy configs use different connections
 
 **Files:** `pkg/http2/transport.go`, `pkg/transport/transport.go`
+
+**Connection Liveness Check False-Positive**
+
+Fixed issue where healthy pooled connections were incorrectly marked as dead, preventing connection reuse.
+
+**Issue:**
+- `isConnectionAlive()` used `SetReadDeadline(immediate)` to check connection status
+- Any buffered data (HTTP/2 control frames, TLS records) triggered false-positive "connection closed"
+- Resulted in healthy connections being discarded from pool
+- Connection pooling effectively disabled despite `ReuseConnection: true`
+
+**Fix:**
+- Skip liveness check for recently used connections (<5 seconds)
+- Recent connections are highly likely to be alive
+- Only check stale connections (unused for >5 seconds)
+- Reduces false-positives while maintaining connection health
+
+**Files:** `pkg/transport/transport.go` (line 518-530)
+
+**HTTP/1.1 ALPN Protocol Enforcement**
+
+Fixed issue where HTTP/1.1 transport could negotiate HTTP/2 with servers when user's custom TLSConfig didn't explicitly set NextProtos.
+
+**Issue:**
+- User provides custom `TLSConfig` without `NextProtos`
+- Server advertises HTTP/2 support via ALPN
+- Go TLS library negotiates HTTP/2 by default
+- HTTP/1.1 transport receives HTTP/2 protocol unexpectedly
+
+**Fix:**
+- Force `NextProtos = ["http/1.1"]` for all HTTP/1.1 transport connections
+- Applied to both default and custom TLSConfig paths
+- Ensures HTTP/1.1 transport never negotiates HTTP/2
+- Users wanting HTTP/2 must explicitly use `Protocol: "http/2"`
+
+**Files:** `pkg/transport/transport.go` (line 388-399)
 
 ### 🧪 Testing
 

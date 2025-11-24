@@ -384,6 +384,12 @@ func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config
 		if config.InsecureTLS {
 			tlsConfig.InsecureSkipVerify = true
 		}
+
+		// BUG FIX (v2.0.3): Force HTTP/1.1 ALPN for HTTP/1.1 transport
+		// HTTP/1.1 transport should NEVER negotiate HTTP/2, regardless of user's TLSConfig
+		// If user wants HTTP/2, they should use Protocol="http/2" which routes to http2.Transport
+		// This prevents servers from upgrading to HTTP/2 when user explicitly wants HTTP/1.1
+		tlsConfig.NextProtos = []string{"http/1.1"}
 	} else {
 		// Create default TLS configuration
 		tlsConfig = &tls.Config{
@@ -827,7 +833,7 @@ func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxy *ProxyConfig,
 	}
 
 	// Build CONNECT request
-	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, config.Host)
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\nConnection: keep-alive\r\n", targetAddr, config.Host)
 
 	// Add custom headers if provided
 	for key, value := range proxy.ProxyHeaders {
