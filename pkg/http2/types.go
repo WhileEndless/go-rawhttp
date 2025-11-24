@@ -8,9 +8,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WhileEndless/go-rawhttp/pkg/timing"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 )
+
+// ProxyConfig re-export from client package for HTTP/2 support
+type ProxyConfig struct {
+	Type         string
+	Host         string
+	Port         int
+	Username     string
+	Password     string
+	ConnTimeout  time.Duration
+	ProxyHeaders map[string]string
+	TLSConfig    *tls.Config
+	ResolveDNSViaProxy bool
+}
 
 // Options contains HTTP/2 specific configuration.
 // These settings map to HTTP/2 SETTINGS frame parameters (RFC 7540).
@@ -75,6 +89,11 @@ type Options struct {
 	// DisableSNI completely disables SNI extension in TLS handshake.
 	// Cannot be used together with SNI option (validation error).
 	DisableSNI bool
+
+	// Proxy specifies upstream proxy configuration for HTTP/2 connections.
+	// When set, HTTP/2 will use HTTP CONNECT tunnel through the proxy.
+	// All proxy types supported: http, https, socks4, socks5
+	Proxy *ProxyConfig
 
 	// Priority settings
 	Priority *PriorityParam
@@ -221,6 +240,7 @@ type Response struct {
 
 	// Timing information
 	TotalTime time.Duration // Total time taken for the request
+	Metrics   *timing.Metrics // Detailed timing metrics (DNS, TCP, TLS, TTFB)
 
 	// Connection metadata (added for compatibility with HTTP/1.1 Response)
 	ConnectedIP        string // Actual IP address connected to

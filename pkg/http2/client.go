@@ -141,8 +141,12 @@ func (c *Client) DoWithOptions(ctx context.Context, rawRequest []byte, host stri
 	// Calculate total time
 	totalTime := time.Since(startTime)
 
+	// Get detailed timing metrics from timer
+	metrics := timer.GetMetrics()
+
 	// Add timing information
 	response.TotalTime = totalTime
+	response.Metrics = &metrics
 	response.FrameStats = &FrameStats{
 		FramesSent:     len(frames),
 		FramesReceived: len(response.Frames),
@@ -431,11 +435,29 @@ func (c *Client) fillConnectionMetadata(response *Response, conn *Connection, ho
 	// Connection reuse
 	response.ConnectionReused = opts != nil && opts.ReuseConnection
 
-	// Proxy information - HTTP/2 doesn't support proxies directly yet
-	// But we include this for future compatibility
-	response.ProxyUsed = false
-	response.ProxyType = ""
-	response.ProxyAddr = ""
+	// Proxy information
+	if opts != nil && opts.Proxy != nil {
+		response.ProxyUsed = true
+		response.ProxyType = opts.Proxy.Type
+
+		proxyPort := opts.Proxy.Port
+		if proxyPort == 0 {
+			// Apply default ports
+			switch opts.Proxy.Type {
+			case "http":
+				proxyPort = 8080
+			case "https":
+				proxyPort = 443
+			case "socks4", "socks5":
+				proxyPort = 1080
+			}
+		}
+		response.ProxyAddr = fmt.Sprintf("%s:%d", opts.Proxy.Host, proxyPort)
+	} else {
+		response.ProxyUsed = false
+		response.ProxyType = ""
+		response.ProxyAddr = ""
+	}
 }
 
 // getTLSVersionString converts TLS version constant to string

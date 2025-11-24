@@ -245,6 +245,21 @@ func (s *Sender) convertToHTTP2Options(opts Options) *http2.Options {
 	h2opts.TLSRenegotiation = opts.TLSRenegotiation
 	h2opts.CipherSuites = opts.CipherSuites
 
+	// Pass proxy configuration (v2.0.3+)
+	if opts.Proxy != nil {
+		h2opts.Proxy = &http2.ProxyConfig{
+			Type:               opts.Proxy.Type,
+			Host:               opts.Proxy.Host,
+			Port:               opts.Proxy.Port,
+			Username:           opts.Proxy.Username,
+			Password:           opts.Proxy.Password,
+			ConnTimeout:        opts.Proxy.ConnTimeout,
+			ProxyHeaders:       opts.Proxy.ProxyHeaders,
+			TLSConfig:          opts.Proxy.TLSConfig,
+			ResolveDNSViaProxy: opts.Proxy.ResolveDNSViaProxy,
+		}
+	}
+
 	return h2opts
 }
 
@@ -270,6 +285,21 @@ func (s *Sender) convertHTTP2Response(resp *http2.Response) *Response {
 	// Generate status line
 	statusLine := fmt.Sprintf("HTTP/2 %d %s", resp.Status, resp.StatusText)
 
+	// Use metrics from HTTP/2 response if available, otherwise create minimal metrics
+	var timingMetrics timing.Metrics
+	var metricsPtr *timing.Metrics
+
+	if resp.Metrics != nil {
+		timingMetrics = *resp.Metrics
+		metricsPtr = resp.Metrics
+	} else {
+		// Fallback: create minimal metrics with just TotalTime
+		timingMetrics = timing.Metrics{
+			TotalTime: resp.TotalTime,
+		}
+		metricsPtr = &timingMetrics
+	}
+
 	return &Response{
 		StatusCode:  resp.Status,
 		StatusLine:  statusLine,
@@ -280,13 +310,9 @@ func (s *Sender) convertHTTP2Response(resp *http2.Response) *Response {
 		BodyBytes:   bodyBytes,
 		RawBytes:    rawBytes,
 
-		// Timing metrics
-		Timings: timing.Metrics{
-			TotalTime: resp.TotalTime,
-		},
-		Metrics: &timing.Metrics{
-			TotalTime: resp.TotalTime,
-		},
+		// Timing metrics (use from HTTP/2 response)
+		Timings: timingMetrics,
+		Metrics: metricsPtr,
 
 		// Connection metadata
 		ConnectedIP:        resp.ConnectedIP,

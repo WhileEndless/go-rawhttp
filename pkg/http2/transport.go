@@ -1,6 +1,7 @@
 package http2
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,7 +170,7 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	var err error
 
 	if scheme == "https" {
-		// TLS connection with ALPN
+		// TLS connection with ALPN (with optional proxy support)
 		rawConn, err = t.connectTLS(ctx, addr, host, opts)
 	} else {
 		// Plain TCP connection (H2C)
@@ -237,10 +239,27 @@ func (t *Transport) Connect(ctx context.Context, host string, port int, scheme s
 	return conn, nil
 }
 
-// connectTLS establishes a TLS connection with ALPN negotiation
+// connectTLS establishes a TLS connection with ALPN negotiation (supports proxy)
 func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opts *Options) (net.Conn, error) {
-	dialer := &net.Dialer{
-		Timeout: 30 * time.Second,
+	var conn net.Conn
+	var err error
+
+	// Check if we need to use a proxy
+	if opts.Proxy != nil {
+		// Connect via proxy using CONNECT tunnel
+		conn, err = t.connectViaProxy(ctx, addr, serverName, opts)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Direct connection
+		dialer := &net.Dialer{
+			Timeout: 30 * time.Second,
+		}
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Create TLS config with ALPN
@@ -324,11 +343,8 @@ func (t *Transport) connectTLS(ctx context.Context, addr, serverName string, opt
 		tlsConfig.Renegotiation = opts.TLSRenegotiation
 	}
 
-	// Dial with context
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, err
-	}
+	// Already have 'conn' from above (either proxy or direct connection)
+	// No need to dial again
 
 	// Perform TLS handshake
 	tlsConn := tls.Client(conn, tlsConfig)
@@ -690,4 +706,144 @@ func convertSettings(settings map[http2.SettingID]uint32) []http2.Setting {
 func containsUpgradeSuccess(response string) bool {
 	// Check for successful upgrade response
 	return len(response) > 12 && response[:12] == "HTTP/1.1 101"
+}
+
+// connectViaProxy establishes connection through HTTP/HTTPS/SOCKS proxy
+func (t *Transport) connectViaProxy(ctx context.Context, targetAddr, serverName string, opts *Options) (net.Conn, error) {
+	proxy := opts.Proxy
+	if proxy == nil {
+		return nil, fmt.Errorf("proxy configuration is nil")
+	}
+
+	// Apply default ports if not specified
+	proxyPort := proxy.Port
+	if proxyPort == 0 {
+		switch proxy.Type {
+		case "http":
+			proxyPort = 8080
+		case "https":
+			proxyPort = 443
+		case "socks4", "socks5":
+			proxyPort = 1080
+		default:
+			return nil, fmt.Errorf("unsupported proxy type: %s", proxy.Type)
+		}
+	}
+
+	proxyAddr := fmt.Sprintf("%s:%d", proxy.Host, proxyPort)
+	timeout := proxy.ConnTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	// Route to appropriate proxy handler
+	switch proxy.Type {
+	case "http", "https":
+		return t.connectViaHTTPProxy(ctx, proxy, proxyAddr, targetAddr, serverName, timeout, opts)
+	case "socks4":
+		return t.connectViaSOCKS4Proxy(ctx, proxy, proxyAddr, targetAddr, timeout)
+	case "socks5":
+		return t.connectViaSOCKS5Proxy(ctx, proxy, proxyAddr, targetAddr, timeout)
+	default:
+		return nil, fmt.Errorf("unsupported proxy type: %s", proxy.Type)
+	}
+}
+
+// connectViaHTTPProxy connects through HTTP/HTTPS CONNECT proxy
+func (t *Transport) connectViaHTTPProxy(ctx context.Context, proxy *ProxyConfig, proxyAddr, targetAddr, serverName string, timeout time.Duration, opts *Options) (net.Conn, error) {
+	// Connect to proxy server
+	dialer := &net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to proxy: %w", err)
+	}
+
+	// If proxy type is HTTPS, upgrade connection to TLS
+	if proxy.Type == "https" {
+		tlsConfig := proxy.TLSConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{
+				ServerName:         proxy.Host,
+				InsecureSkipVerify: opts.InsecureTLS,
+			}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+			if opts.InsecureTLS {
+				tlsConfig.InsecureSkipVerify = true
+			}
+			if tlsConfig.ServerName == "" {
+				tlsConfig.ServerName = proxy.Host
+			}
+		}
+
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.Handshake(); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("TLS handshake to proxy failed: %w", err)
+		}
+		conn = tlsConn
+	}
+
+	// Build CONNECT request
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, serverName)
+
+	// Add custom headers if provided
+	for key, value := range proxy.ProxyHeaders {
+		connectReq += fmt.Sprintf("%s: %s\r\n", key, value)
+	}
+
+	// Add proxy authentication if credentials provided
+	if proxy.Username != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(proxy.Username + ":" + proxy.Password))
+		connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", auth)
+	}
+
+	connectReq += "\r\n"
+
+	// Send CONNECT request
+	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send CONNECT request: %w", err)
+	}
+
+	// Read CONNECT response
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+	}
+
+	// Check if CONNECT succeeded (HTTP/1.x 200)
+	if !strings.Contains(statusLine, " 200") {
+		conn.Close()
+		return nil, fmt.Errorf("proxy CONNECT failed: %s", strings.TrimSpace(statusLine))
+	}
+
+	// Read and discard remaining headers until empty line
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("failed to read CONNECT response headers: %w", err)
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+
+	// CONNECT tunnel established successfully
+	return conn, nil
+}
+
+// connectViaSOCKS4Proxy connects through a SOCKS4 proxy (simplified version for HTTP/2)
+func (t *Transport) connectViaSOCKS4Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr, targetAddr string, timeout time.Duration) (net.Conn, error) {
+	// TODO: Implement SOCKS4 support for HTTP/2
+	return nil, fmt.Errorf("SOCKS4 proxy support for HTTP/2 not yet implemented")
+}
+
+// connectViaSOCKS5Proxy connects through a SOCKS5 proxy (simplified version for HTTP/2)
+func (t *Transport) connectViaSOCKS5Proxy(ctx context.Context, proxy *ProxyConfig, proxyAddr, targetAddr string, timeout time.Duration) (net.Conn, error) {
+	// TODO: Implement SOCKS5 support for HTTP/2
+	return nil, fmt.Errorf("SOCKS5 proxy support for HTTP/2 not yet implemented")
 }
