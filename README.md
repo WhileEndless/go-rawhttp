@@ -1,6 +1,6 @@
 # go-rawhttp
 
-[![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
+[![Version](https://img.shields.io/badge/version-2.0.3-blue.svg)](https://github.com/WhileEndless/go-rawhttp)
 [![Go](https://img.shields.io/badge/go-1.19+-00ADD8.svg)](https://golang.org/)
 
 A high-performance, modular HTTP client library for Go that provides raw socket-based HTTP communication with support for both HTTP/1.1 and HTTP/2 protocols, offering comprehensive features and fine-grained control.
@@ -25,7 +25,7 @@ A high-performance, modular HTTP client library for Go that provides raw socket-
 ✅ **Memory Efficient** - No memory leaks, automatic cleanup, disk spilling for large responses
 ✅ **Connection Management** - Proper resource cleanup, health monitoring, idle timeouts
 ✅ **Connection Pooling** - Keep-Alive support with automatic connection reuse and observability
-✅ **Proxy Support** - HTTP, HTTPS, SOCKS4, and SOCKS5 upstream proxy support with authentication and advanced features
+✅ **Proxy Support** - HTTP, HTTPS, SOCKS4, and SOCKS5 upstream proxy support for both HTTP/1.1 and HTTP/2 with authentication and advanced features
 ✅ **Custom TLS** - Direct TLS config passthrough for full control (TLS versions, cipher suites, mTLS client certificates)
 ✅ **Connection Metadata** - Detailed socket-level and TLS session info (addresses, session IDs, resumption)
 ✅ **Error Recovery** - Structured error classification with operation tracking for smart retry logic
@@ -83,6 +83,99 @@ func main() {
 ```
 
 ## Recent Enhancements
+
+### v2.0.3 (2025-11-24)
+
+🚀 **HTTP/2 Proxy Support & Connection Pooling Fix**
+
+This release adds comprehensive proxy support for HTTP/2 protocol and fixes critical connection pooling issues when using proxies.
+
+#### ✨ New Features
+
+**HTTP/2 Proxy Support**
+
+HTTP/2 now fully supports all proxy types (HTTP, HTTPS, SOCKS4, SOCKS5), matching HTTP/1.1 capabilities. Previously, HTTP/2 had no proxy support - now it's feature-complete.
+
+```go
+// HTTP/2 through HTTP proxy
+opts := rawhttp.Options{
+    Protocol: "http/2",
+    Host:     "example.com",
+    Port:     443,
+    Scheme:   "https",
+    Proxy:    rawhttp.ParseProxyURL("http://127.0.0.1:8080"),
+}
+
+// HTTP/2 through SOCKS5 proxy
+opts := rawhttp.Options{
+    Protocol: "http/2",
+    Host:     "example.com",
+    Port:     443,
+    Scheme:   "https",
+    Proxy:    rawhttp.ParseProxyURL("socks5://user:pass@proxy:1080"),
+}
+
+resp, err := sender.Do(ctx, request, opts)
+fmt.Printf("Protocol: %s\n", resp.NegotiatedProtocol)  // "h2"
+fmt.Printf("Proxy Used: %v (%s)\n", resp.ProxyUsed, resp.ProxyAddr)
+```
+
+**How it works:**
+- HTTP/HTTPS proxy: Establishes CONNECT tunnel, then TLS+HTTP/2 inside tunnel
+- SOCKS proxies: Proxies the TCP connection, then TLS+HTTP/2 negotiation
+- Full ALPN (h2) negotiation through proxies
+- Proxy authentication supported for all types
+
+**Implemented proxy types:**
+- ✅ HTTP proxy (CONNECT method)
+- ✅ HTTPS proxy (TLS to proxy + CONNECT)
+- ✅ SOCKS4 proxy (manual implementation)
+- ✅ SOCKS5 proxy (golang.org/x/net/proxy)
+
+#### 🐛 Bug Fixes
+
+**Connection Pooling with Proxy**
+
+Fixed critical bug where connections were incorrectly shared across different proxy configurations, causing security and correctness issues.
+
+**Problem:**
+- Pool key was just "host:port"
+- Different proxies to same target shared connections
+- Proxied and direct connections mixed in pool
+- Connection reuse broken with proxies
+
+**Fix:**
+- Pool key now includes proxy information
+- Format: `"proxy_type:proxy_host:proxy_port->target_host:target_port"`
+- Direct connections: `"target_host:target_port"`
+- Applies to both HTTP/1.1 and HTTP/2
+
+**Example:**
+```
+With HTTP proxy:  "http:127.0.0.1:8080->example.com:443"
+With SOCKS5:      "socks5:proxy.com:1080->example.com:443"
+Direct:           "example.com:443"
+```
+
+**Impact:**
+- ✅ Connections properly isolated by proxy
+- ✅ Connection reuse works correctly with proxies
+- ✅ Prevents security issues from connection mixing
+- ✅ Maintains backward compatibility
+
+#### 📝 Technical Details
+
+**Files Modified:**
+- `pkg/http2/transport.go` - HTTP/2 proxy support and pooling
+- `pkg/transport/transport.go` - HTTP/1.1 pooling fix
+- `rawhttp.go` - Proxy config pass-through to HTTP/2
+- `cmd/pooling_test/` - Connection pooling test suite
+
+**See Also:**
+- Complete changelog: [CHANGELOG.md](CHANGELOG.md#203---2025-11-24)
+- Pooling test: `cmd/pooling_test/main.go`
+
+---
 
 ### v2.0.0 (2025-11-23)
 

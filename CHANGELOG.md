@@ -5,6 +5,211 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2025-11-24
+
+### ✨ New Features
+
+**HTTP/2 Proxy Support**
+
+Added comprehensive proxy support for HTTP/2 protocol, matching the existing HTTP/1.1 proxy capabilities. HTTP/2 now fully supports HTTP, HTTPS, SOCKS4, and SOCKS5 proxies.
+
+**1. HTTP/HTTPS Proxy Support via CONNECT Tunnel**
+
+HTTP/2 can now be used through HTTP and HTTPS proxies using the standard CONNECT tunnel method (RFC 7231).
+
+```go
+sender := rawhttp.NewSender()
+opts := rawhttp.Options{
+    Host:     "example.com",
+    Port:     443,
+    Scheme:   "https",
+    Protocol: "http/2",  // Now works with proxy!
+    Proxy: &rawhttp.ProxyConfig{
+        Type: "http",
+        Host: "proxy.com",
+        Port: 8080,
+    },
+}
+resp, err := sender.Do(ctx, req, opts)
+```
+
+**How it works:**
+- Establishes HTTP/1.1 CONNECT tunnel to proxy
+- Upgrades to TLS inside the tunnel
+- Negotiates HTTP/2 via ALPN (h2)
+- All subsequent HTTP/2 frames sent through encrypted tunnel
+- Proxy sees CONNECT request, tunnel contents are encrypted
+
+**Features:**
+- Full CONNECT tunnel implementation
+- TLS upgrade inside tunnel
+- Proxy authentication (Basic auth)
+- Custom proxy headers
+- HTTPS proxy support (TLS to proxy)
+- Proper error handling and reporting
+
+**Files:** `pkg/http2/transport.go` (connectViaHTTPProxy, connectViaProxy)
+
+**2. SOCKS4 Proxy Support for HTTP/2**
+
+Added SOCKS4 protocol support for HTTP/2, matching HTTP/1.1 implementation.
+
+```go
+opts.Proxy = &rawhttp.ProxyConfig{
+    Type:     "socks4",
+    Host:     "proxy.com",
+    Port:     1080,
+    Username: "user", // SOCKS4 user ID
+}
+```
+
+**Features:**
+- IPv4-only support (SOCKS4 limitation)
+- User ID authentication
+- Manual SOCKS4 protocol implementation
+- Proper response code handling (0x5A=success, 0x5B-5D=failures)
+
+**Files:** `pkg/http2/transport.go` (connectViaSOCKS4Proxy)
+
+**3. SOCKS5 Proxy Support for HTTP/2**
+
+Added SOCKS5 protocol support for HTTP/2, matching HTTP/1.1 implementation.
+
+```go
+opts.Proxy = &rawhttp.ProxyConfig{
+    Type:     "socks5",
+    Host:     "proxy.com",
+    Port:     1080,
+    Username: "user",
+    Password: "pass",
+}
+```
+
+**Features:**
+- IPv4 and IPv6 support
+- Username/password authentication (RFC 1929)
+- Uses golang.org/x/net/proxy library
+- DNS resolution via proxy supported
+
+**Files:** `pkg/http2/transport.go` (connectViaSOCKS5Proxy)
+
+**4. Proxy Configuration Pass-through**
+
+Enhanced the main library interface to automatically pass proxy configuration from Options to HTTP/2 client.
+
+**Changes:**
+- `rawhttp.go` - Added convertToHTTP2Options() to pass proxy config
+- Automatic mapping of ProxyConfig from client.Options to http2.Options
+- Maintains consistency between HTTP/1.1 and HTTP/2 proxy handling
+
+**Files:** `rawhttp.go` (convertToHTTP2Options)
+
+### 🐛 Bug Fixes
+
+**Connection Pooling with Proxy**
+
+Fixed critical connection pooling bug where connections were incorrectly shared across different proxy configurations.
+
+**Issue:**
+- Connection pool used simple "host:port" key format
+- Different proxies to same target shared connections incorrectly
+- Proxied and direct connections to same target shared pool
+- Connection reuse broken when using proxies
+
+**Impact:**
+- Connections through proxy A were reused for proxy B
+- Direct connections mixed with proxied connections
+- Incorrect routing of requests
+- Potential security and privacy issues
+
+**Fix:**
+
+1. **HTTP/2 Pooling** (`pkg/http2/transport.go`):
+   - Modified pool key to include proxy information
+   - New format: `"proxy_type:proxy_host:proxy_port->target_host:target_port"`
+   - Example: `"http:127.0.0.1:8080->example.com:443"`
+   - Direct connections still use: `"example.com:443"`
+
+2. **HTTP/1.1 Pooling** (`pkg/transport/transport.go`):
+   - Applied same proxy-aware pool key strategy
+   - Maintains consistency with HTTP/2 implementation
+   - Ensures proper connection isolation
+
+**Pool Key Examples:**
+```
+With HTTP proxy:  "http:proxy.com:8080->example.com:443"
+With SOCKS5:      "socks5:proxy.com:1080->example.com:443"
+Direct (no proxy): "example.com:443"
+```
+
+**Testing:**
+- Added comprehensive pooling test suite (`cmd/pooling_test/main.go`)
+- Tests HTTP/1.1 connection reuse with proxy
+- Tests HTTP/2 connection reuse with proxy
+- Verifies different proxy configs use different connections
+
+**Files:** `pkg/http2/transport.go`, `pkg/transport/transport.go`
+
+### 🧪 Testing
+
+**New Test Program:**
+- `cmd/pooling_test/main.go` - Comprehensive connection pooling tests with proxy
+  - Test 1: HTTP/1.1 connection reuse verification
+  - Test 2: HTTP/2 connection reuse verification
+  - Test 3: Proxy isolation verification (different proxies = different connections)
+
+### 📝 Technical Details
+
+**Proxy Support Implementation:**
+- HTTP/2 CONNECT tunnel: Full RFC 7231 compliance
+- SOCKS4: Manual implementation, IPv4-only
+- SOCKS5: Uses golang.org/x/net/proxy library
+- TLS upgrade inside proxy tunnel for HTTPS
+- ALPN negotiation (h2) after tunnel establishment
+
+**Connection Pooling:**
+- Pool key now includes full proxy context
+- Default ports applied when not specified (http=8080, https=443, socks=1080)
+- Backward compatible: direct connections unaffected
+- Thread-safe pool key generation
+
+**Commits:**
+- `2772aae` - feat: Add HTTP/2 proxy support via CONNECT tunnel
+- `70d3ef6` - feat: Add SOCKS4/SOCKS5 proxy support for HTTP/2
+- `248037a` - fix: Implement proxy-aware connection pooling for HTTP/1.1 and HTTP/2
+
+### Migration Guide
+
+**No Breaking Changes** - All changes are backward compatible.
+
+**New HTTP/2 Proxy Support:**
+```go
+// HTTP/2 now works through any proxy type
+opts := rawhttp.Options{
+    Protocol: "http/2",
+    Proxy: &rawhttp.ProxyConfig{
+        Type: "http",      // or "https", "socks4", "socks5"
+        Host: "proxy.com",
+        Port: 8080,
+    },
+}
+```
+
+**Connection Pooling:**
+- Automatically fixed - no code changes needed
+- Different proxies now properly use separate connections
+- Pool statistics accurate for proxy scenarios
+
+**Verification:**
+```go
+resp, _ := sender.Do(ctx, req, opts)
+fmt.Printf("Proxy Used: %v (%s)\n", resp.ProxyUsed, resp.ProxyAddr)
+fmt.Printf("Protocol: %s\n", resp.NegotiatedProtocol)
+fmt.Printf("Connection Reused: %v\n", resp.ConnectionReused)
+```
+
+---
+
 ## [2.0.1] - 2025-11-23
 
 ### 🔧 Fixed
