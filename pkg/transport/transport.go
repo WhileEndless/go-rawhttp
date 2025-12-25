@@ -144,15 +144,34 @@ type PoolConfig struct {
 	// WaitTimeout is how long to wait for a connection when pool is exhausted.
 	// 0 means no wait (return error immediately). Default: 0
 	WaitTimeout time.Duration
+
+	// --- Stale Connection Handling (v2.1.1+) ---
+
+	// TCPKeepAlive enables OS-level TCP keep-alive probes.
+	// This helps detect dead connections at the TCP level.
+	// Default: true
+	TCPKeepAlive bool
+
+	// TCPKeepAlivePeriod is the interval between TCP keep-alive probes.
+	// Only used if TCPKeepAlive is true. Default: 30 seconds
+	TCPKeepAlivePeriod time.Duration
+
+	// StaleCheckThreshold is how long after last use to check connection liveness.
+	// Connections used more recently than this are assumed alive.
+	// Default: 1 second (reduced from 5s in v2.1.0)
+	StaleCheckThreshold time.Duration
 }
 
 // DefaultPoolConfig returns the default pool configuration.
 func DefaultPoolConfig() PoolConfig {
 	return PoolConfig{
 		MaxIdleConnsPerHost: 2,
-		MaxConnsPerHost:     0, // unlimited
+		MaxConnsPerHost:     0,  // unlimited
 		MaxIdleTime:         90 * time.Second,
-		WaitTimeout:         0, // no blocking
+		WaitTimeout:         0,  // no blocking
+		TCPKeepAlive:        true,
+		TCPKeepAlivePeriod:  30 * time.Second,
+		StaleCheckThreshold: 1 * time.Second,
 	}
 }
 
@@ -229,6 +248,14 @@ func NewWithConfig(config PoolConfig) *Transport {
 	if config.MaxIdleTime <= 0 {
 		config.MaxIdleTime = 90 * time.Second
 	}
+	// v2.1.1+: Apply defaults for stale connection handling
+	if config.TCPKeepAlivePeriod <= 0 {
+		config.TCPKeepAlivePeriod = 30 * time.Second
+	}
+	if config.StaleCheckThreshold <= 0 {
+		config.StaleCheckThreshold = 1 * time.Second
+	}
+	// Note: TCPKeepAlive defaults to false (zero value), but DefaultPoolConfig sets it to true
 
 	t := &Transport{
 		resolver:   net.DefaultResolver,
@@ -253,6 +280,13 @@ func NewWithResolverAndConfig(resolver *net.Resolver, config PoolConfig) *Transp
 	}
 	if config.MaxIdleTime <= 0 {
 		config.MaxIdleTime = 90 * time.Second
+	}
+	// v2.1.1+: Apply defaults for stale connection handling
+	if config.TCPKeepAlivePeriod <= 0 {
+		config.TCPKeepAlivePeriod = 30 * time.Second
+	}
+	if config.StaleCheckThreshold <= 0 {
+		config.StaleCheckThreshold = 1 * time.Second
 	}
 
 	t := &Transport{
@@ -450,7 +484,20 @@ func (t *Transport) connectTCP(ctx context.Context, dialAddr string, timeout tim
 	defer timer.EndTCP()
 
 	dialer := &net.Dialer{Timeout: timeout}
-	return dialer.DialContext(ctx, "tcp", dialAddr)
+	conn, err := dialer.DialContext(ctx, "tcp", dialAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enable TCP Keep-Alive if configured (v2.1.1+)
+	if t.poolConfig.TCPKeepAlive {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetKeepAlive(true)
+			tcpConn.SetKeepAlivePeriod(t.poolConfig.TCPKeepAlivePeriod)
+		}
+	}
+
+	return conn, nil
 }
 
 func (t *Transport) upgradeTLS(ctx context.Context, conn net.Conn, config Config, timer *timing.Timer, metadata *ConnectionMetadata) (net.Conn, error) {
@@ -634,8 +681,8 @@ func (t *Transport) getFromPool(key string) (net.Conn, *ConnectionMetadata, bool
 			continue
 		}
 
-		// Skip liveness check for recently used connections (v2.0.3+ logic)
-		recentlyUsed := time.Since(pc.lastUsed) < 5*time.Second
+		// Skip liveness check for recently used connections (configurable since v2.1.1)
+		recentlyUsed := time.Since(pc.lastUsed) < t.poolConfig.StaleCheckThreshold
 		if !recentlyUsed && !t.isConnectionAlive(pc.conn) {
 			pc.conn.Close()
 			continue

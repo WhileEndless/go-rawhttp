@@ -18,7 +18,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "2.1.0"
+const Version = "2.1.1"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {

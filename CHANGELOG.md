@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2025-12-25
+
+### 🐛 Bug Fixes
+
+**Stale Connection Detection and Recovery**
+
+Fixed critical issue where server-closed keep-alive connections caused "broken pipe" errors. The library now:
+
+- **Automatically retries on stale connections**: When a write fails due to broken pipe or connection reset, the library transparently retries with a fresh connection
+- **Properly closes stale connections**: Failed connections are now closed instead of being returned to the pool
+- **Enables TCP Keep-Alive by default**: Prevents idle connections from being silently closed by firewalls/proxies
+- **Configurable stale check threshold**: Reduced from 5 seconds to 1 second (configurable)
+
+**New PoolConfig Options:**
+```go
+sender := rawhttp.NewSenderWithPoolConfig(transport.PoolConfig{
+    // Existing options...
+    MaxIdleConnsPerHost: 5,
+
+    // New stale connection handling options (v2.1.1+)
+    TCPKeepAlive:        true,             // Enable TCP Keep-Alive (default: true)
+    TCPKeepAlivePeriod:  30 * time.Second, // Keep-Alive probe interval (default: 30s)
+    StaleCheckThreshold: 1 * time.Second,  // Connection freshness threshold (default: 1s)
+})
+```
+
+**Impact:**
+- Eliminates "broken pipe" and "connection reset by peer" errors in long-running applications
+- Improves reliability when servers have short keep-alive timeouts
+- No code changes required - existing applications automatically benefit
+
+### 🔧 Technical Details
+
+**Retry Mechanism:**
+- Maximum 1 retry per request on stale connection error
+- Only retries if `ReuseConnection: true` is set
+- Retry uses a fresh connection, not the stale one
+- Stale connection is properly closed and not returned to pool
+
+**TCP Keep-Alive:**
+- Enabled by default on all new TCP connections
+- Sends probes every 30 seconds (configurable)
+- Helps detect dead connections before use
+- OS-level mechanism, no application overhead
+
+**Stale Error Detection:**
+- `syscall.EPIPE` (broken pipe)
+- `syscall.ECONNRESET` (connection reset by peer)
+- `net.ErrClosed` (use of closed connection)
+- String pattern matching for platform-specific error messages
+
 ## [2.1.0] - 2025-12-25
 
 ### ✨ New Features

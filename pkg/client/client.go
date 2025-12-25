@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"io"
 	"net"
 	"net/textproto"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/WhileEndless/go-rawhttp/v2/pkg/buffer"
@@ -356,6 +358,7 @@ func parseMethod(req []byte) string {
 }
 
 // Do executes the HTTP request using raw sockets.
+// v2.1.1+: Automatically retries on stale connection errors (broken pipe, connection reset).
 func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, error) {
 	if c.transport == nil {
 		return nil, errors.NewValidationError("client transport is nil")
@@ -364,9 +367,6 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	if len(req) == 0 {
 		return nil, errors.NewValidationError("request cannot be empty")
 	}
-
-	// Create timer for performance measurement
-	timer := timing.NewTimer()
 
 	// Create transport config
 	transportConfig := transport.Config{
@@ -382,7 +382,7 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		ReadTimeout:     opts.ReadTimeout,
 		WriteTimeout:    opts.WriteTimeout,
 		ReuseConnection: opts.ReuseConnection,
-		Proxy:           convertProxyConfig(opts.Proxy), // Convert client.ProxyConfig to transport.ProxyConfig
+		Proxy:           convertProxyConfig(opts.Proxy),
 		CustomCACerts:   opts.CustomCACerts,
 		ClientCertPEM:   opts.ClientCertPEM,
 		ClientKeyPEM:    opts.ClientKeyPEM,
@@ -391,18 +391,54 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 		TLSConfig:       opts.TLSConfig,
 	}
 
+	// v2.1.1+: Retry loop for stale connection handling
+	// Maximum 1 retry on stale connection error (broken pipe, connection reset)
+	const maxRetries = 1
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err, shouldRetry := c.doRequest(ctx, req, opts, transportConfig, attempt > 0)
+		if err == nil {
+			return resp, nil
+		}
+
+		lastErr = err
+
+		// Check if we should retry on stale connection error
+		if shouldRetry && attempt < maxRetries && opts.ReuseConnection && isStaleConnectionError(err) {
+			// Stale connection detected, retry with fresh connection
+			continue
+		}
+
+		// Non-retryable error or max retries reached
+		return resp, err
+	}
+
+	return nil, lastErr
+}
+
+// doRequest performs the actual HTTP request.
+// Returns (response, error, shouldRetry).
+func (c *Client) doRequest(ctx context.Context, req []byte, opts Options, transportConfig transport.Config, isRetry bool) (*Response, error, bool) {
+	// Create timer for performance measurement
+	timer := timing.NewTimer()
+
 	// Establish connection
 	conn, connMetadata, err := c.transport.Connect(ctx, transportConfig, timer)
 	if err != nil {
-		return nil, err
+		return nil, err, false
 	}
 
-	// Handle connection cleanup based on pooling settings
-	shouldClose := !opts.ReuseConnection
+	// Track whether we encountered a stale connection error
+	var staleError bool
+
+	// Handle connection cleanup based on pooling settings and errors
 	defer func() {
-		if shouldClose {
+		if staleError || !opts.ReuseConnection {
+			// Close connection on error or when pooling is disabled
 			c.transport.CloseConnectionWithMetadata(opts.Host, opts.Port, conn, connMetadata)
 		} else {
+			// Return healthy connection to pool
 			c.transport.ReleaseConnectionWithMetadata(opts.Host, opts.Port, conn, connMetadata)
 		}
 	}()
@@ -411,65 +447,72 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	method := parseMethod(req)
 
 	// Initialize response
-	// Calculate raw buffer size with validation (DEF-2)
 	rawBufferSize := opts.BodyMemLimit
 	if rawBufferSize == 0 {
 		rawBufferSize = 4 * 1024 * 1024 // Default 4MB
 	}
-	// Add overhead for headers but cap at reasonable maximum (100MB)
-	rawBufferSize += 1024 * 1024 // Add 1MB overhead
+	rawBufferSize += 1024 * 1024 // Add 1MB overhead for headers
 	if rawBufferSize > 100*1024*1024 {
 		rawBufferSize = 100 * 1024 * 1024 // Cap at 100MB
 	}
 
 	response := &Response{
-		Method:  method, // Store method for body reading logic
-		Headers: make(map[string][]string),
-		Body:    buffer.New(opts.BodyMemLimit),
-		// Raw buffer needs extra space for headers, status line, and HTTP overhead
-		Raw: buffer.New(rawBufferSize),
-		// Set basic connection metadata
+		Method:             method,
+		Headers:            make(map[string][]string),
+		Body:               buffer.New(opts.BodyMemLimit),
+		Raw:                buffer.New(rawBufferSize),
 		ConnectedIP:        connMetadata.ConnectedIP,
 		ConnectedPort:      connMetadata.ConnectedPort,
 		NegotiatedProtocol: connMetadata.NegotiatedProtocol,
 		ConnectionReused:   connMetadata.ConnectionReused,
-		// Set enhanced socket metadata
-		LocalAddr:    connMetadata.LocalAddr,
-		RemoteAddr:   connMetadata.RemoteAddr,
-		ConnectionID: connMetadata.ConnectionID,
-		// Set TLS metadata
-		TLSVersion:     connMetadata.TLSVersion,
-		TLSCipherSuite: connMetadata.TLSCipherSuite,
-		TLSServerName:  connMetadata.TLSServerName,
-		// Set enhanced TLS metadata
-		TLSSessionID: connMetadata.TLSSessionID,
-		TLSResumed:   connMetadata.TLSResumed,
-		// Set proxy metadata (v2.0.0+)
-		ProxyUsed: connMetadata.ProxyUsed,
-		ProxyType: connMetadata.ProxyType,
-		ProxyAddr: connMetadata.ProxyAddr,
+		LocalAddr:          connMetadata.LocalAddr,
+		RemoteAddr:         connMetadata.RemoteAddr,
+		ConnectionID:       connMetadata.ConnectionID,
+		TLSVersion:         connMetadata.TLSVersion,
+		TLSCipherSuite:     connMetadata.TLSCipherSuite,
+		TLSServerName:      connMetadata.TLSServerName,
+		TLSSessionID:       connMetadata.TLSSessionID,
+		TLSResumed:         connMetadata.TLSResumed,
+		ProxyUsed:          connMetadata.ProxyUsed,
+		ProxyType:          connMetadata.ProxyType,
+		ProxyAddr:          connMetadata.ProxyAddr,
 	}
 
 	// Send request
 	if err := c.sendRequest(conn, req, opts.WriteTimeout); err != nil {
-		return nil, err
+		// Check if this is a stale connection error
+		if isStaleConnectionError(err) {
+			staleError = true
+			// Clean up buffers on retry
+			response.Body.Close()
+			response.Raw.Close()
+			return nil, err, true // Signal retry
+		}
+		return nil, err, false
 	}
 
 	// Read response
 	if err := c.readResponse(conn, response, opts.ReadTimeout, timer); err != nil {
+		// Check for stale connection during read (less common but possible)
+		if isStaleConnectionError(err) {
+			staleError = true
+			response.Body.Close()
+			response.Raw.Close()
+			return nil, err, true // Signal retry
+		}
+
 		// Set metrics even for partial responses
 		response.Timings = timer.GetMetrics()
 		response.BodyBytes = response.Body.Size()
 		response.RawBytes = response.Raw.Size()
-		// IMPORTANT: Returning partial response with error
-		// Caller MUST close response.Body and response.Raw even on error
+
 		// Auto-close buffers on specific errors to prevent leaks
 		if errors.IsTimeoutError(err) || errors.IsContextCanceled(err) {
 			response.Body.Close()
 			response.Raw.Close()
-			return nil, err // Don't return partial response for timeout/cancel
+			return nil, err, false
 		}
-		return response, err // Return partial response for other errors
+		return response, err, false // Return partial response for other errors
 	}
 
 	// Set final metrics
@@ -477,7 +520,7 @@ func (c *Client) Do(ctx context.Context, req []byte, opts Options) (*Response, e
 	response.BodyBytes = response.Body.Size()
 	response.RawBytes = response.Raw.Size()
 
-	return response, nil
+	return response, nil, false
 }
 
 func (c *Client) sendRequest(conn net.Conn, req []byte, writeTimeout time.Duration) error {
@@ -803,4 +846,46 @@ func (c *Client) readUntilClose(r *bufio.Reader, connectionHeader string, dst, r
 	}
 
 	return nil
+}
+
+// isStaleConnectionError checks if an error indicates a stale/dead connection.
+// These errors occur when the server closed the connection but we tried to reuse it.
+// v2.1.1+: Used for automatic retry on stale connections.
+func isStaleConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for broken pipe (EPIPE) - write to closed connection
+	if stderrors.Is(err, syscall.EPIPE) {
+		return true
+	}
+
+	// Check for connection reset by peer (ECONNRESET)
+	if stderrors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+
+	// Check for "use of closed network connection"
+	if stderrors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	// Also check error message for common patterns
+	errStr := err.Error()
+	stalePatterns := []string{
+		"broken pipe",
+		"connection reset by peer",
+		"use of closed network connection",
+		"forcibly closed",
+		"connection was aborted",
+	}
+
+	for _, pattern := range stalePatterns {
+		if strings.Contains(strings.ToLower(errStr), pattern) {
+			return true
+		}
+	}
+
+	return false
 }
