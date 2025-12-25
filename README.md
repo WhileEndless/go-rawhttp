@@ -1131,6 +1131,43 @@ for i := 0; i < 10; i++ {
 }
 ```
 
+### Advanced Connection Pool Configuration (v2.1.0+)
+
+For high-concurrency scenarios, customize pool behavior:
+
+```go
+import rawhttp "github.com/WhileEndless/go-rawhttp/v2"
+
+// Create sender with custom pool settings
+sender := rawhttp.NewSenderWithPoolConfig(rawhttp.PoolConfig{
+    MaxIdleConnsPerHost: 5,             // Keep up to 5 idle connections per host (default: 2)
+    MaxConnsPerHost:     10,            // Limit total connections per host (0 = unlimited)
+    MaxIdleTime:         90 * time.Second, // Connection idle timeout
+    WaitTimeout:         5 * time.Second,  // Wait for available connection (0 = no wait)
+})
+
+opts := rawhttp.Options{
+    Scheme:          "https",
+    Host:            "api.example.com",
+    Port:            443,
+    ReuseConnection: true,
+}
+
+// Monitor pool statistics
+stats := sender.PoolStats()
+fmt.Printf("Pool Stats:\n")
+fmt.Printf("  Active: %d\n", stats.ActiveConns)
+fmt.Printf("  Idle: %d\n", stats.IdleConns)
+fmt.Printf("  Total Created: %d\n", stats.TotalCreated)
+fmt.Printf("  Total Reused: %d\n", stats.TotalReused)
+fmt.Printf("  Wait Timeouts: %d\n", stats.WaitTimeouts)
+
+// Per-host statistics
+for host, hostStats := range stats.HostStats {
+    fmt.Printf("  %s: Active=%d, Idle=%d\n", host, hostStats.ActiveConns, hostStats.IdleConns)
+}
+```
+
 ### Upstream Proxy Support (v2.0.0+)
 
 ⚠️ **BREAKING CHANGE**: `ProxyURL` field has been removed in v2.0.0. Use `Proxy` with `ParseProxyURL()` helper.

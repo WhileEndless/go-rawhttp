@@ -18,7 +18,7 @@ import (
 )
 
 // Version is the current version of the rawhttp library
-const Version = "2.0.5"
+const Version = "2.1.0"
 
 // GetVersion returns the current version of the library
 func GetVersion() string {
@@ -51,6 +51,12 @@ type (
 	// PoolStats provides connection pool statistics
 	PoolStats = transport.PoolStats
 
+	// PoolConfig controls connection pool behavior (v2.1.0+)
+	PoolConfig = transport.PoolConfig
+
+	// HostPoolStats provides per-host pool statistics (v2.1.0+)
+	HostPoolStats = transport.HostPoolStats
+
 	// ProxyConfig contains upstream proxy configuration (v2.0.0+)
 	ProxyConfig = client.ProxyConfig
 
@@ -82,6 +88,29 @@ func NewSender() *Sender {
 		client:      client.New(),
 		http2Client: http2.NewClient(nil),
 	}
+}
+
+// NewSenderWithPoolConfig returns a new Sender with custom pool configuration.
+// Use this to control connection pooling behavior for HTTP/1.1 connections.
+//
+// Example:
+//
+//	sender := rawhttp.NewSenderWithPoolConfig(rawhttp.PoolConfig{
+//	    MaxIdleConnsPerHost: 5,   // Keep up to 5 idle connections per host
+//	    MaxConnsPerHost:     10,  // Limit to 10 total connections per host
+//	    MaxIdleTime:         90 * time.Second,
+//	})
+func NewSenderWithPoolConfig(config PoolConfig) *Sender {
+	return &Sender{
+		client:      client.NewWithPoolConfig(config),
+		http2Client: http2.NewClient(nil),
+	}
+}
+
+// DefaultPoolConfig returns the default pool configuration.
+// Useful as a base for customization.
+func DefaultPoolConfig() PoolConfig {
+	return transport.DefaultPoolConfig()
 }
 
 // PoolStats returns HTTP/1.1 connection pool statistics.

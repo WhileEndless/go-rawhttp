@@ -309,6 +309,14 @@ func NewWithTransport(t *transport.Transport) *Client {
 	}
 }
 
+// NewWithPoolConfig creates a Client with custom pool configuration.
+// This is the recommended way to customize connection pooling behavior.
+func NewWithPoolConfig(config transport.PoolConfig) *Client {
+	return &Client{
+		transport: transport.NewWithConfig(config),
+	}
+}
+
 // PoolStats returns connection pool statistics.
 func (c *Client) PoolStats() transport.PoolStats {
 	if c.transport == nil {

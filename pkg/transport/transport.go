@@ -126,59 +126,147 @@ type ConnectionMetadata struct {
 	PoolKey string // Pool key used for this connection (includes proxy info)
 }
 
+// PoolConfig holds connection pool configuration.
+// All fields have sensible defaults for backward compatibility.
+type PoolConfig struct {
+	// MaxIdleConnsPerHost is the maximum number of idle connections to keep per host.
+	// Default: 2 (matches Go net/http default)
+	MaxIdleConnsPerHost int
+
+	// MaxConnsPerHost is the maximum total connections (idle + active) per host.
+	// 0 means no limit. Default: 0 (unlimited)
+	MaxConnsPerHost int
+
+	// MaxIdleTime is the maximum time a connection can be idle before cleanup.
+	// Default: 90 seconds
+	MaxIdleTime time.Duration
+
+	// WaitTimeout is how long to wait for a connection when pool is exhausted.
+	// 0 means no wait (return error immediately). Default: 0
+	WaitTimeout time.Duration
+}
+
+// DefaultPoolConfig returns the default pool configuration.
+func DefaultPoolConfig() PoolConfig {
+	return PoolConfig{
+		MaxIdleConnsPerHost: 2,
+		MaxConnsPerHost:     0, // unlimited
+		MaxIdleTime:         90 * time.Second,
+		WaitTimeout:         0, // no blocking
+	}
+}
+
 // pooledConnection wraps a connection with metadata
 type pooledConnection struct {
 	conn      net.Conn
 	metadata  ConnectionMetadata
 	lastUsed  time.Time
-	inUse     bool
 	keepAlive bool
+	createdAt time.Time // v2.1.0+: for connection age tracking
+}
+
+// hostPool manages connections for a single host:port key.
+type hostPool struct {
+	mu        sync.Mutex
+	idle      []*pooledConnection // slice of idle connections (LIFO)
+	numActive int                 // count of connections currently in use
+	cond      *sync.Cond          // condition variable for blocking wait
+}
+
+// newHostPool creates a new host pool.
+func newHostPool() *hostPool {
+	hp := &hostPool{
+		idle: make([]*pooledConnection, 0, 4),
+	}
+	hp.cond = sync.NewCond(&hp.mu)
+	return hp
 }
 
 // Transport handles the network connection and protocol negotiation.
 type Transport struct {
-	resolver          *net.Resolver
-	connPool          sync.Map      // map[string]*pooledConnection (key: "host:port")
-	poolMutex         sync.Mutex
-	maxIdleTime       time.Duration // Maximum idle time for pooled connections
-	connectionIDCounter uint64      // Atomic counter for unique connection IDs
+	resolver            *net.Resolver
+	hostPools           sync.Map   // map[string]*hostPool (key: "host:port" or proxy-aware key)
+	poolConfig          PoolConfig // Pool configuration
+	connectionIDCounter uint64     // Atomic counter for unique connection IDs
 
 	// Pool statistics (atomic counters)
-	statsConnectionsReused uint64 // Lifetime count of reused connections
+	statsConnectionsReused  uint64 // Lifetime count of reused connections
+	statsConnectionsCreated uint64 // Lifetime count of new connections
+	statsWaitTimeouts       uint64 // Count of wait timeouts (when MaxConnsPerHost exceeded)
 
 	// Lifecycle management
-	stopChan chan struct{} // Channel to signal cleanup goroutine to stop
-	wg       sync.WaitGroup // WaitGroup to track running goroutines
+	stopChan chan struct{}    // Channel to signal cleanup goroutine to stop
+	wg       sync.WaitGroup   // WaitGroup to track running goroutines
 }
 
 // PoolStats provides read-only statistics about the connection pool.
 type PoolStats struct {
-	ActiveConns int // Currently in use (checked out)
-	IdleConns   int // Idle in pool (available)
-	TotalReused int // Lifetime reuse count
+	ActiveConns  int                      // Currently in use (checked out)
+	IdleConns    int                      // Idle in pool (available)
+	TotalReused  int                      // Lifetime reuse count
+	TotalCreated int                      // Lifetime creation count (v2.1.0+)
+	WaitTimeouts int                      // Lifetime wait timeout count (v2.1.0+)
+	HostStats    map[string]HostPoolStats // Per-host statistics (v2.1.0+)
 }
 
-// New creates a new Transport instance.
+// HostPoolStats provides statistics for a single host pool.
+type HostPoolStats struct {
+	ActiveConns int
+	IdleConns   int
+}
+
+// New creates a new Transport instance with default pool configuration.
 func New() *Transport {
+	return NewWithConfig(DefaultPoolConfig())
+}
+
+// NewWithConfig creates a new Transport with custom pool configuration.
+func NewWithConfig(config PoolConfig) *Transport {
+	// Apply defaults for zero values
+	if config.MaxIdleConnsPerHost <= 0 {
+		config.MaxIdleConnsPerHost = 2
+	}
+	if config.MaxIdleTime <= 0 {
+		config.MaxIdleTime = 90 * time.Second
+	}
+
 	t := &Transport{
-		resolver:    net.DefaultResolver,
-		maxIdleTime: 90 * time.Second, // Default 90 seconds idle timeout
-		stopChan:    make(chan struct{}),
+		resolver:   net.DefaultResolver,
+		poolConfig: config,
+		stopChan:   make(chan struct{}),
 	}
 	// Start connection pool cleanup goroutine
 	go t.cleanupIdleConnections()
 	return t
 }
 
-// NewWithResolver creates a new Transport with a custom resolver.
+// NewWithResolver creates a new Transport with a custom resolver and default pool config.
 func NewWithResolver(resolver *net.Resolver) *Transport {
+	return NewWithResolverAndConfig(resolver, DefaultPoolConfig())
+}
+
+// NewWithResolverAndConfig creates a new Transport with custom resolver and pool config.
+func NewWithResolverAndConfig(resolver *net.Resolver, config PoolConfig) *Transport {
+	// Apply defaults for zero values
+	if config.MaxIdleConnsPerHost <= 0 {
+		config.MaxIdleConnsPerHost = 2
+	}
+	if config.MaxIdleTime <= 0 {
+		config.MaxIdleTime = 90 * time.Second
+	}
+
 	t := &Transport{
-		resolver:    resolver,
-		maxIdleTime: 90 * time.Second,
-		stopChan:    make(chan struct{}),
+		resolver:   resolver,
+		poolConfig: config,
+		stopChan:   make(chan struct{}),
 	}
 	go t.cleanupIdleConnections()
 	return t
+}
+
+// GetPoolConfig returns the current pool configuration.
+func (t *Transport) GetPoolConfig() PoolConfig {
+	return t.poolConfig
 }
 
 // Connect establishes a connection based on the configuration.
@@ -215,12 +303,20 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 
 	// Try to get connection from pool if ReuseConnection is enabled
 	if config.ReuseConnection {
-		if conn, meta, ok := t.getFromPool(poolKey); ok {
-			metadata = meta
-			metadata.ConnectionReused = true
-			metadata.PoolKey = poolKey // Store pool key for release/close
-			return conn, metadata, nil
+		conn, meta, canProceed := t.getFromPool(poolKey)
+		if conn != nil && meta != nil {
+			// Got an existing connection from pool
+			meta.ConnectionReused = true
+			meta.PoolKey = poolKey
+			return conn, meta, nil
 		}
+		if !canProceed {
+			// Pool exhausted and wait timed out
+			return nil, nil, errors.NewConnectionError(config.Host, config.Port,
+				fmt.Errorf("connection pool exhausted for %s (max: %d, timeout: %v)",
+					poolKey, t.poolConfig.MaxConnsPerHost, t.poolConfig.WaitTimeout))
+		}
+		// canProceed=true but conn=nil means slot reserved, create new connection
 	}
 
 	// Setup timeouts
@@ -285,9 +381,9 @@ func (t *Transport) Connect(ctx context.Context, config Config, timer *timing.Ti
 	// Store pool key in metadata for release/close operations
 	metadata.PoolKey = poolKey
 
-	// Add to pool if ReuseConnection is enabled
+	// Track new connection creation for stats
 	if config.ReuseConnection {
-		t.addToPool(poolKey, conn, metadata)
+		atomic.AddUint64(&t.statsConnectionsCreated, 1)
 	}
 
 	return conn, metadata, nil
@@ -506,61 +602,104 @@ func (t *Transport) tlsVersionString(version uint16) string {
 	}
 }
 
-// getFromPool retrieves a connection from the pool
+// getOrCreateHostPool retrieves or creates a host pool for the given key.
+func (t *Transport) getOrCreateHostPool(key string) *hostPool {
+	val, loaded := t.hostPools.LoadOrStore(key, newHostPool())
+	if !loaded {
+		// New pool created
+	}
+	return val.(*hostPool)
+}
+
+// getFromPool retrieves an available connection from the pool.
+// Returns:
+//   - (conn, metadata, true) if a reusable connection was found
+//   - (nil, nil, true) if no connection available but slot reserved for new one
+//   - (nil, nil, false) if pool is exhausted and wait timed out
 func (t *Transport) getFromPool(key string) (net.Conn, *ConnectionMetadata, bool) {
-	t.poolMutex.Lock()
-	defer t.poolMutex.Unlock()
+	hp := t.getOrCreateHostPool(key)
 
-	val, ok := t.connPool.Load(key)
-	if !ok {
-		return nil, nil, false
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	// Try to get an idle connection (LIFO - most recently used first)
+	for len(hp.idle) > 0 {
+		n := len(hp.idle)
+		pc := hp.idle[n-1]
+		hp.idle = hp.idle[:n-1]
+
+		// Skip stale connections
+		if time.Since(pc.lastUsed) > t.poolConfig.MaxIdleTime {
+			pc.conn.Close()
+			continue
+		}
+
+		// Skip liveness check for recently used connections (v2.0.3+ logic)
+		recentlyUsed := time.Since(pc.lastUsed) < 5*time.Second
+		if !recentlyUsed && !t.isConnectionAlive(pc.conn) {
+			pc.conn.Close()
+			continue
+		}
+
+		// Found a valid connection - mark as active
+		hp.numActive++
+		atomic.AddUint64(&t.statsConnectionsReused, 1)
+
+		metaCopy := pc.metadata
+		return pc.conn, &metaCopy, true
 	}
 
-	pooled := val.(*pooledConnection)
-	if pooled.inUse {
-		return nil, nil, false
-	}
+	// No idle connections - check if we can create a new one
+	maxConns := t.poolConfig.MaxConnsPerHost
+	if maxConns > 0 && hp.numActive >= maxConns {
+		// Pool exhausted - wait or return error
+		if t.poolConfig.WaitTimeout > 0 {
+			deadline := time.Now().Add(t.poolConfig.WaitTimeout)
+			for hp.numActive >= maxConns {
+				waitTime := time.Until(deadline)
+				if waitTime <= 0 {
+					atomic.AddUint64(&t.statsWaitTimeouts, 1)
+					return nil, nil, false // timeout
+				}
 
-	// Skip liveness check for recently used connections (v2.0.3+)
-	// Recent connections are likely still alive, and liveness check has false positives
-	// with HTTP/2 (control frames) and TLS (buffered data)
-	recentlyUsed := time.Since(pooled.lastUsed) < 5*time.Second
+				// Wait with timeout using condition variable
+				done := make(chan struct{})
+				go func() {
+					hp.cond.Wait()
+					close(done)
+				}()
 
-	if !recentlyUsed {
-		// Check if connection is still alive (only for stale connections)
-		if !t.isConnectionAlive(pooled.conn) {
-			t.connPool.Delete(key)
-			pooled.conn.Close()
-			return nil, nil, false
+				// Temporarily unlock while waiting
+				hp.mu.Unlock()
+				select {
+				case <-done:
+					hp.mu.Lock()
+					// Check again if idle connection available
+					if len(hp.idle) > 0 {
+						n := len(hp.idle)
+						pc := hp.idle[n-1]
+						hp.idle = hp.idle[:n-1]
+						hp.numActive++
+						atomic.AddUint64(&t.statsConnectionsReused, 1)
+						metaCopy := pc.metadata
+						return pc.conn, &metaCopy, true
+					}
+				case <-time.After(waitTime):
+					hp.mu.Lock()
+					atomic.AddUint64(&t.statsWaitTimeouts, 1)
+					return nil, nil, false
+				}
+			}
+		} else {
+			return nil, nil, false // no waiting configured
 		}
 	}
 
-	pooled.inUse = true
-	pooled.lastUsed = time.Now()
-
-	// Increment reuse counter
-	atomic.AddUint64(&t.statsConnectionsReused, 1)
-
-	// Copy metadata
-	metaCopy := pooled.metadata
-	return pooled.conn, &metaCopy, true
+	// Reserve a slot for new connection
+	hp.numActive++
+	return nil, nil, true // caller should create new connection
 }
 
-// addToPool adds a connection to the pool
-func (t *Transport) addToPool(key string, conn net.Conn, metadata *ConnectionMetadata) {
-	t.poolMutex.Lock()
-	defer t.poolMutex.Unlock()
-
-	pooled := &pooledConnection{
-		conn:      conn,
-		metadata:  *metadata,
-		lastUsed:  time.Now(),
-		inUse:     true,
-		keepAlive: true,
-	}
-
-	t.connPool.Store(key, pooled)
-}
 
 // ReleaseConnection marks a connection as available for reuse
 func (t *Transport) ReleaseConnection(host string, port int, conn net.Conn) {
@@ -577,19 +716,45 @@ func (t *Transport) ReleaseConnectionWithMetadata(host string, port int, conn ne
 		key = fmt.Sprintf("%s:%d", host, port)
 	}
 
-	t.poolMutex.Lock()
-	defer t.poolMutex.Unlock()
-
-	val, ok := t.connPool.Load(key)
+	val, ok := t.hostPools.Load(key)
 	if !ok {
+		// No pool for this key, just close the connection
+		conn.Close()
 		return
 	}
 
-	pooled := val.(*pooledConnection)
-	if pooled.conn == conn {
-		pooled.inUse = false
-		pooled.lastUsed = time.Now()
+	hp := val.(*hostPool)
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	// Connection is no longer active
+	hp.numActive--
+
+	// Check if we can add this connection back to idle pool
+	idleCount := len(hp.idle)
+	if idleCount >= t.poolConfig.MaxIdleConnsPerHost {
+		// Too many idle connections, close this one
+		conn.Close()
+		hp.cond.Signal()
+		return
 	}
+
+	// Add connection back to idle pool
+	pc := &pooledConnection{
+		conn:      conn,
+		lastUsed:  time.Now(),
+		keepAlive: true,
+		createdAt: time.Now(),
+	}
+	// Copy metadata if available
+	if metadata != nil {
+		pc.metadata = *metadata
+	}
+
+	hp.idle = append(hp.idle, pc)
+
+	// Signal waiting goroutines
+	hp.cond.Signal()
 }
 
 // CloseConnection closes and removes a connection from the pool
@@ -607,20 +772,32 @@ func (t *Transport) CloseConnectionWithMetadata(host string, port int, conn net.
 		key = fmt.Sprintf("%s:%d", host, port)
 	}
 
-	t.poolMutex.Lock()
-	defer t.poolMutex.Unlock()
-
-	val, ok := t.connPool.Load(key)
-	if ok {
-		pooled := val.(*pooledConnection)
-		if pooled.conn == conn {
-			t.connPool.Delete(key)
-			pooled.conn.Close()
-		}
-	} else {
-		// Connection not in pool, just close it
+	val, ok := t.hostPools.Load(key)
+	if !ok {
+		// Not in pool, just close it
 		conn.Close()
+		return
 	}
+
+	hp := val.(*hostPool)
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	// Check if connection is in idle list
+	for i, pc := range hp.idle {
+		if pc.conn == conn {
+			// Connection was idle, remove from list and close
+			hp.idle = append(hp.idle[:i], hp.idle[i+1:]...)
+			pc.conn.Close()
+			hp.cond.Signal()
+			return
+		}
+	}
+
+	// Connection was active (checked out), decrement counter and close
+	hp.numActive--
+	conn.Close()
+	hp.cond.Signal()
 }
 
 // isConnectionAlive checks if a connection is still alive
@@ -655,28 +832,38 @@ func (t *Transport) isConnectionAlive(conn net.Conn) bool {
 // PoolStats returns current connection pool statistics.
 // This is a read-only snapshot of the pool state.
 func (t *Transport) PoolStats() PoolStats {
-	var active, idle int
+	stats := PoolStats{
+		HostStats: make(map[string]HostPoolStats),
+	}
 
-	t.poolMutex.Lock()
-	t.connPool.Range(func(key, value interface{}) bool {
-		pooled := value.(*pooledConnection)
-		if pooled.inUse {
-			active++
-		} else {
-			idle++
+	t.hostPools.Range(func(key, value interface{}) bool {
+		hp := value.(*hostPool)
+		hp.mu.Lock()
+
+		idleCount := len(hp.idle)
+		activeCount := hp.numActive
+
+		hostStats := HostPoolStats{
+			ActiveConns: activeCount,
+			IdleConns:   idleCount,
 		}
+
+		stats.ActiveConns += activeCount
+		stats.IdleConns += idleCount
+		stats.HostStats[key.(string)] = hostStats
+
+		hp.mu.Unlock()
 		return true
 	})
-	t.poolMutex.Unlock()
 
-	return PoolStats{
-		ActiveConns: active,
-		IdleConns:   idle,
-		TotalReused: int(atomic.LoadUint64(&t.statsConnectionsReused)),
-	}
+	stats.TotalReused = int(atomic.LoadUint64(&t.statsConnectionsReused))
+	stats.TotalCreated = int(atomic.LoadUint64(&t.statsConnectionsCreated))
+	stats.WaitTimeouts = int(atomic.LoadUint64(&t.statsWaitTimeouts))
+
+	return stats
 }
 
-// cleanupIdleConnections periodically removes idle connections from pool
+// cleanupIdleConnections periodically removes stale idle connections from pool
 func (t *Transport) cleanupIdleConnections() {
 	t.wg.Add(1)
 	defer t.wg.Done()
@@ -687,19 +874,27 @@ func (t *Transport) cleanupIdleConnections() {
 	for {
 		select {
 		case <-ticker.C:
-			t.poolMutex.Lock()
-			t.connPool.Range(func(key, value interface{}) bool {
-				pooled := value.(*pooledConnection)
+			t.hostPools.Range(func(key, value interface{}) bool {
+				hp := value.(*hostPool)
+				hp.mu.Lock()
 
-				// Remove connections that have been idle too long
-				if !pooled.inUse && time.Since(pooled.lastUsed) > t.maxIdleTime {
-					t.connPool.Delete(key)
-					pooled.conn.Close()
+				now := time.Now()
+				newIdle := make([]*pooledConnection, 0, len(hp.idle))
+
+				for _, pc := range hp.idle {
+					// Remove connections that have been idle too long
+					if now.Sub(pc.lastUsed) > t.poolConfig.MaxIdleTime {
+						pc.conn.Close()
+					} else {
+						newIdle = append(newIdle, pc)
+					}
 				}
+
+				hp.idle = newIdle
+				hp.mu.Unlock()
 
 				return true
 			})
-			t.poolMutex.Unlock()
 		case <-t.stopChan:
 			// Cleanup and exit
 			return
@@ -1029,13 +1224,16 @@ func (t *Transport) Close() error {
 	t.wg.Wait()
 
 	// Close all pooled connections
-	t.poolMutex.Lock()
-	defer t.poolMutex.Unlock()
-
-	t.connPool.Range(func(key, value interface{}) bool {
-		pooled := value.(*pooledConnection)
-		pooled.conn.Close()
-		t.connPool.Delete(key)
+	t.hostPools.Range(func(key, value interface{}) bool {
+		hp := value.(*hostPool)
+		hp.mu.Lock()
+		for _, pc := range hp.idle {
+			pc.conn.Close()
+		}
+		hp.idle = nil
+		hp.numActive = 0
+		hp.mu.Unlock()
+		t.hostPools.Delete(key)
 		return true
 	})
 

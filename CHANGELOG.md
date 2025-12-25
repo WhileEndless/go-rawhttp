@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-12-25
+
+### ✨ New Features
+
+**Multi-Connection Pool Support**
+
+Connection pool now supports multiple idle connections per host, significantly improving performance for concurrent HTTP/1.1 requests.
+
+**New Types:**
+- `PoolConfig` - Configuration for connection pool behavior
+- `HostPoolStats` - Per-host pool statistics
+
+**New Functions:**
+- `NewSenderWithPoolConfig(config PoolConfig)` - Create sender with custom pool settings
+- `DefaultPoolConfig()` - Get default pool configuration
+
+**Pool Configuration Options:**
+```go
+sender := rawhttp.NewSenderWithPoolConfig(rawhttp.PoolConfig{
+    MaxIdleConnsPerHost: 5,           // Keep up to 5 idle connections per host (default: 2)
+    MaxConnsPerHost:     10,          // Limit total connections per host (default: 0, unlimited)
+    MaxIdleTime:         90 * time.Second, // Idle timeout (default: 90s)
+    WaitTimeout:         5 * time.Second,  // Wait for available connection (default: 0, no wait)
+})
+```
+
+**Enhanced Pool Statistics:**
+```go
+stats := sender.PoolStats()
+fmt.Printf("Active: %d, Idle: %d, Created: %d, Reused: %d\n",
+    stats.ActiveConns, stats.IdleConns, stats.TotalCreated, stats.TotalReused)
+
+// Per-host statistics (v2.1.0+)
+for host, hostStats := range stats.HostStats {
+    fmt.Printf("%s: Active=%d, Idle=%d\n", host, hostStats.ActiveConns, hostStats.IdleConns)
+}
+```
+
+### 🔧 Improvements
+
+**Connection Pool Architecture**
+- Redesigned pool to use separate idle and active connection tracking
+- Implemented LIFO (Last In First Out) retrieval for better connection health
+- Added proper connection lifecycle management
+- Improved thread safety with fine-grained locking per host
+
+**Performance**
+- Sequential requests: 100% connection reuse (unchanged)
+- Concurrent requests: Dramatically improved reuse with multi-connection support
+- Reduced lock contention through per-host pool isolation
+
+### 📚 API Changes
+
+**Backward Compatible:**
+- All existing code continues to work without modification
+- `NewSender()` uses default pool configuration (MaxIdleConnsPerHost: 2)
+- `ReuseConnection: true` behavior unchanged for sequential requests
+
+**New Exports:**
+- `rawhttp.PoolConfig` - Pool configuration type
+- `rawhttp.HostPoolStats` - Per-host statistics type
+- `rawhttp.NewSenderWithPoolConfig()` - Custom pool constructor
+- `rawhttp.DefaultPoolConfig()` - Default configuration helper
+
 ## [2.0.5] - 2025-11-24
 
 ### 🔧 Fixes

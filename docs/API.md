@@ -20,11 +20,41 @@ type Sender struct {
 ```go
 func NewSender() *Sender
 ```
-Creates a new Sender instance with default configuration.
+Creates a new Sender instance with default pool configuration.
 
 **Example:**
 ```go
 sender := rawhttp.NewSender()
+```
+
+##### NewSenderWithPoolConfig (v2.1.0+)
+```go
+func NewSenderWithPoolConfig(config PoolConfig) *Sender
+```
+Creates a new Sender with custom connection pool configuration.
+
+**Parameters:**
+- `config`: Pool configuration options
+
+**Example:**
+```go
+sender := rawhttp.NewSenderWithPoolConfig(rawhttp.PoolConfig{
+    MaxIdleConnsPerHost: 5,
+    MaxConnsPerHost:     10,
+    MaxIdleTime:         90 * time.Second,
+})
+```
+
+##### PoolStats
+```go
+func (s *Sender) PoolStats() PoolStats
+```
+Returns current connection pool statistics.
+
+**Example:**
+```go
+stats := sender.PoolStats()
+fmt.Printf("Active: %d, Idle: %d\n", stats.ActiveConns, stats.IdleConns)
 ```
 
 ##### Do
@@ -665,6 +695,67 @@ const (
     DefaultReadTimeout = 30 * time.Second
     MaxHeaderBytes     = 64 * 1024        // 64KB
 )
+```
+
+### PoolConfig (v2.1.0+)
+
+Configuration for connection pool behavior.
+
+```go
+type PoolConfig struct {
+    MaxIdleConnsPerHost int           // Max idle connections per host (default: 2)
+    MaxConnsPerHost     int           // Max total connections per host (0 = unlimited)
+    MaxIdleTime         time.Duration // Idle connection timeout (default: 90s)
+    WaitTimeout         time.Duration // Wait for available connection (0 = no wait)
+}
+```
+
+**Fields:**
+- `MaxIdleConnsPerHost`: Maximum number of idle connections to keep per host. Default: 2
+- `MaxConnsPerHost`: Maximum total connections (idle + active) per host. 0 means unlimited. Default: 0
+- `MaxIdleTime`: How long an idle connection can remain in the pool. Default: 90 seconds
+- `WaitTimeout`: How long to wait for an available connection when pool is exhausted. Default: 0 (no wait)
+
+**Example:**
+```go
+config := rawhttp.PoolConfig{
+    MaxIdleConnsPerHost: 5,
+    MaxConnsPerHost:     10,
+    MaxIdleTime:         90 * time.Second,
+    WaitTimeout:         5 * time.Second,
+}
+sender := rawhttp.NewSenderWithPoolConfig(config)
+```
+
+### PoolStats (v2.1.0+)
+
+Read-only statistics about the connection pool.
+
+```go
+type PoolStats struct {
+    ActiveConns  int                      // Currently in use (checked out)
+    IdleConns    int                      // Idle in pool (available)
+    TotalReused  int                      // Lifetime reuse count
+    TotalCreated int                      // Lifetime creation count
+    WaitTimeouts int                      // Lifetime wait timeout count
+    HostStats    map[string]HostPoolStats // Per-host statistics
+}
+
+type HostPoolStats struct {
+    ActiveConns int // Active connections for this host
+    IdleConns   int // Idle connections for this host
+}
+```
+
+**Example:**
+```go
+stats := sender.PoolStats()
+fmt.Printf("Active: %d, Idle: %d\n", stats.ActiveConns, stats.IdleConns)
+fmt.Printf("Total Created: %d, Total Reused: %d\n", stats.TotalCreated, stats.TotalReused)
+
+for host, hostStats := range stats.HostStats {
+    fmt.Printf("%s: Active=%d, Idle=%d\n", host, hostStats.ActiveConns, hostStats.IdleConns)
+}
 ```
 
 ### HTTP2Settings
