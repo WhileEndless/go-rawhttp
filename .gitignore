@@ -1,0 +1,23 @@
+# Temporary analysis files
+BUG_FIXES_ANALYSIS.md
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+*.test
+coverage.out
+*.prof
+
+# Build artifacts
+/dist/
+/bin/
+/rawhttp
+cmd/rawhttp/rawhttp
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
